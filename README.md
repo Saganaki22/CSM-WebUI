@@ -72,16 +72,18 @@ The project uses the CSM-1B .safeteonsors model:
 
 ### HuggingFace Authentication Requirements
 
-**IMPORTANT:** Before installation, you need to:
+***UPDATE*** Since models were gated i re-uploaded them to my repo non-gated for ease of access [HuggingFace](https://huggingface.co/drbaph/models/tree/main)
 
-1. Create a HuggingFace account at [huggingface.co](https://huggingface.co)
-2. Visit [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and request access to the model
-3. Create a HuggingFace access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-4. During the installation process, you will be prompted to authenticate with your HuggingFace token - paste the token when prompted
+~~**IMPORTANT:** Before installation, you need to:~~  
 
-Without access to the Llama model and proper authentication, the program will not work as it uses the Llama backbone.
+~~1. Create a HuggingFace account at [huggingface.co](https://huggingface.co)~~  
+~~2. Visit [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and request access to the model~~  
+~~3. Create a HuggingFace access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)~~  
+~~4. During the installation process, you will be prompted to authenticate with your HuggingFace token - paste the token when prompted~~  
 
-**UPDATE** Since models were gated i re-uploaded them to my repo non-gated for ease of access [HF](https://huggingface.co/drbaph/models/tree/main)
+~~Without access to the Llama model and proper authentication, the program will not work as it uses the Llama backbone.~~
+
+
 
 ## ⚙️ Installation
 
