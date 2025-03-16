@@ -64,126 +64,77 @@ try:
             
             # First check the models/mimi directory
             local_mimi_path = os.path.join("models", "mimi", "model.safetensors")
+            config_path = os.path.join("models", "mimi", "config.json")
+            preprocessor_config_path = os.path.join("models", "mimi", "preprocessor_config.json")
+            
             if os.path.exists(local_mimi_path):
                 try:
                     print(f"Loading mimi from local path: {local_mimi_path}")
-                    # Temporarily disable offline mode
-                    original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
-                    os.environ['HF_DATASETS_OFFLINE'] = '0'
                     
-                    from moshi.models import loaders
-                    
-                    # Check if the file is a safetensors file
-                    is_safetensors = local_mimi_path.endswith('.safetensors')
-                    
-                    if is_safetensors:
+                    # Load config if available
+                    config = {}
+                    if os.path.exists(config_path):
                         try:
-                            from safetensors import safe_open
-                            # Import or define the MimiModel if needed
-                            from moshi.models.mimi import MimiModel
-                            
-                            # Create an empty model first
-                            mimi = loaders.create_empty_mimi(device=device)
-                            
-                            print("Loading safetensors file directly...")
-                            # Load the safetensors file using safetensors library
-                            with safe_open(local_mimi_path, framework="pt", device=device) as f:
-                                # Get all tensors from the file
-                                for key in f.keys():
-                                    try:
-                                        # Try to directly set the tensor in the model's state dict
-                                        tensor = f.get_tensor(key)
-                                        # You may need to adapt the key naming here
-                                        print(f"Loaded tensor for key: {key}")
-                                    except Exception as e:
-                                        print(f"Error loading tensor for key {key}: {str(e)}")
-                            
-                            print("Successfully processed safetensors file")
+                            with open(config_path, 'r') as f:
+                                config = json.load(f)
+                            print(f"Loaded mimi config from {config_path}")
                         except Exception as e:
-                            print(f"Error with safetensors approach: {str(e)}")
-                            
-                    # If not safetensors or safetensors loading failed, just try the normal way
-                    try:
-                        # First try direct loading with the loaders.get_mimi function
-                        print("Attempting standard mimi loading...")
-                        mimi = loaders.get_mimi(local_mimi_path, device=device)
-                        print("Successfully loaded local mimi model using standard loader")
-                    except Exception as e:
-                        print(f"Standard loading failed: {str(e)}")
-                        # Fall back to downloading if all else fails
-                        mimi = None
+                            print(f"Error loading mimi config: {str(e)}")
                     
-                    # Restore offline mode
-                    if original_hf_offline:
-                        os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+                    # Load preprocessor config if available
+                    if os.path.exists(preprocessor_config_path):
+                        try:
+                            with open(preprocessor_config_path, 'r') as f:
+                                preprocessor_config = json.load(f)
+                            print(f"Loaded mimi preprocessor config from {preprocessor_config_path}")
+                            
+                            # Add relevant preprocessor settings to the config
+                            if "sample_rate" in preprocessor_config:
+                                config["sample_rate"] = preprocessor_config["sample_rate"]
+                        except Exception as e:
+                            print(f"Error loading mimi preprocessor config: {str(e)}")
+                    
+                    # Import MimiModel directly
+                    from moshi.models.seanet import MimiModel
+                    from safetensors.torch import load_file
+                    
+                    # Create model with config
+                    mimi_model = MimiModel(**config).to(device)
+                    
+                    # Load weights from safetensors file
+                    print(f"Loading mimi weights from safetensors file...")
+                    state_dict = load_file(local_mimi_path, device=device)
+                    
+                    # Print first few keys for debugging
+                    key_list = list(state_dict.keys())
+                    print(f"Loaded {len(key_list)} keys from safetensors file.")
+                    if key_list:
+                        print(f"First few keys: {key_list[:5]}")
+                    
+                    # Load weights with non-strict setting to handle potential key mismatches
+                    missing_keys, unexpected_keys = mimi_model.load_state_dict(state_dict, strict=False)
+                    
+                    # Print any missing or unexpected keys (limited to first 10)
+                    if missing_keys:
+                        print(f"Missing {len(missing_keys)} keys, first 10: {missing_keys[:10]}")
+                    if unexpected_keys:
+                        print(f"Unexpected {len(unexpected_keys)} keys, first 10: {unexpected_keys[:10]}")
+                    
+                    # Set default sample rate if not in config
+                    if not hasattr(mimi_model, 'sample_rate'):
+                        setattr(mimi_model, 'sample_rate', 24000)
+                        print("Set default sample rate to 24000")
+                    
+                    # Set the mimi model
+                    mimi = mimi_model
+                    print("Successfully loaded local mimi model")
+                    
                 except Exception as e:
                     print(f"Error loading local mimi: {str(e)}")
+                    print(traceback.format_exc())
                     mimi = None
             
-            # Next check CSM-1B folder
-            if mimi is None:
-                # Try different file formats in CSM-1B folder
-                possible_mimi_paths = [
-                    os.path.join("models", "csm-1b", "mimi.bin"),
-                    os.path.join("models", "csm-1b", "mimi.safetensors"),
-                    os.path.join("models", "csm-1b", "mimi.pt"),
-                    os.path.join("models", "csm-1b", "mimi.model")
-                ]
-                
-                for csm_mimi_path in possible_mimi_paths:
-                    if os.path.exists(csm_mimi_path):
-                        try:
-                            print(f"Attempting to load mimi from CSM-1B folder: {csm_mimi_path}")
-                            # Temporarily disable offline mode
-                            original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
-                            os.environ['HF_DATASETS_OFFLINE'] = '0'
-                            
-                            from moshi.models import loaders
-                            
-                            # Check if it's a safetensors file
-                            if csm_mimi_path.endswith('.safetensors'):
-                                try:
-                                    from safetensors import safe_open
-                                    # Create an empty model first
-                                    mimi = loaders.create_empty_mimi(device=device)
-                                    
-                                    print("Loading safetensors file directly...")
-                                    with safe_open(csm_mimi_path, framework="pt", device=device) as f:
-                                        for key in f.keys():
-                                            try:
-                                                tensor = f.get_tensor(key)
-                                                print(f"Loaded tensor for key: {key}")
-                                            except Exception as e:
-                                                print(f"Error loading tensor for key {key}: {str(e)}")
-                                    
-                                    print("Successfully processed safetensors file")
-                                except Exception as e:
-                                    print(f"Error with safetensors approach: {str(e)}")
-                            
-                            # Try standard loading
-                            if mimi is None:
-                                print("Attempting standard mimi loading...")
-                                try:
-                                    mimi = loaders.get_mimi(csm_mimi_path, device=device)
-                                    print("Successfully loaded mimi from CSM-1B folder using standard loader")
-                                except Exception as e:
-                                    print(f"Standard loading failed: {str(e)}")
-                                    mimi = None
-                            
-                            # Restore offline mode
-                            if original_hf_offline:
-                                os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
-                                
-                            # If we successfully loaded the model, break the loop
-                            if mimi is not None:
-                                print(f"Successfully loaded mimi from {csm_mimi_path}")
-                                break
-                                
-                        except Exception as e:
-                            print(f"Error loading mimi from {csm_mimi_path}: {str(e)}")
-                            mimi = None
-            
-            # As a last resort, download from Hugging Face
+            # If local loading failed, try downloading
             if mimi is None:
                 print("Local mimi files not found or failed to load. Downloading from Hugging Face...")
                 
@@ -336,9 +287,11 @@ def load_model(model_path):
         config_path = os.path.join(os.path.dirname(model_path), "config.json")
         debug_path_check(config_path)
         
-        # Check for mimi.bin in the same directory
-        mimi_path = os.path.join(os.path.dirname(model_path), "mimi.bin")
+        # Check for mimi files
+        mimi_path = os.path.join("models", "mimi", "model.safetensors")
+        mimi_config_path = os.path.join("models", "mimi", "config.json")
         debug_path_check(mimi_path)
+        debug_path_check(mimi_config_path)
         
         if not os.path.exists(model_path):
             return f"Error: Model file not found at {model_path}"
@@ -789,7 +742,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
                 )
                 speaker_id = gr.Dropdown(
                     label="Speaker ID",
-                    choices=["0", "1", "2", "3", "4"],
+                    choices=["0", "1", "2", "3", "4", "5"],
                     value="0"
                 )
                 max_audio_length = gr.Slider(
@@ -815,7 +768,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
                 )
                 speaker_id_ctx = gr.Dropdown(
                     label="Speaker ID",
-                    choices=["0", "1", "2", "3", "4"],
+                    choices=["0", "1", "2", "3", "4", "5"],
                     value="0"
                 )
                 max_audio_length_ctx = gr.Slider(
@@ -842,7 +795,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
                 )
                 context_speaker_1 = gr.Dropdown(
                     label="Speaker ID",
-                    choices=["0", "1", "2", "3", "4"],
+                    choices=["0", "1", "2", "3", "4", "5"],
                     value="0"
                 )
             context_audio_1 = gr.Audio(
@@ -860,7 +813,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
                 )
                 context_speaker_2 = gr.Dropdown(
                     label="Speaker ID",
-                    choices=["0", "1", "2", "3", "4"],
+                    choices=["0", "1", "2", "3", "4", "5"],
                     value="1"
                 )
             context_audio_2 = gr.Audio(
@@ -878,7 +831,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
                 )
                 context_speaker_3 = gr.Dropdown(
                     label="Speaker ID",
-                    choices=["0", "1", "2", "3", "4"],
+                    choices=["0", "1", "2", "3", "4", "5"],
                     value="0"
                 )
             context_audio_3 = gr.Audio(
@@ -896,7 +849,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
                 )
                 context_speaker_4 = gr.Dropdown(
                     label="Speaker ID",
-                    choices=["0", "1", "2", "3", "4"],
+                    choices=["0", "1", "2", "3", "4", "5"],
                     value="1"
                 )
             context_audio_4 = gr.Audio(
@@ -1053,7 +1006,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
     gr.Markdown("""
     ### Notes
     - This interface requires the CSM model to be downloaded locally at the specified path.
-    - Speaker IDs (0-4) represent different voices the model can generate.
+    - Speaker IDs (0-5) represent different voices the model can generate.
     - Adding conversation context can improve the quality and naturalness of the generated speech.
     - **Audio Upload**: You can upload your own audio files (.wav, .mp3, .ogg, etc.) or record directly with your microphone.
     - **Voice Cloning**: For best results, upload audio samples that match the voice you want to replicate and use the same Speaker ID.
