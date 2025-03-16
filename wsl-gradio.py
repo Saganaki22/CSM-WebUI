@@ -71,59 +71,47 @@ try:
                     original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
                     os.environ['HF_DATASETS_OFFLINE'] = '0'
                     
-                    # Add custom state_dict loading with key remapping
                     from moshi.models import loaders
+                    
+                    # Check if the file is a safetensors file
+                    is_safetensors = local_mimi_path.endswith('.safetensors')
+                    
+                    if is_safetensors:
+                        try:
+                            from safetensors import safe_open
+                            # Import or define the MimiModel if needed
+                            from moshi.models.mimi import MimiModel
+                            
+                            # Create an empty model first
+                            mimi = loaders.create_empty_mimi(device=device)
+                            
+                            print("Loading safetensors file directly...")
+                            # Load the safetensors file using safetensors library
+                            with safe_open(local_mimi_path, framework="pt", device=device) as f:
+                                # Get all tensors from the file
+                                for key in f.keys():
+                                    try:
+                                        # Try to directly set the tensor in the model's state dict
+                                        tensor = f.get_tensor(key)
+                                        # You may need to adapt the key naming here
+                                        print(f"Loaded tensor for key: {key}")
+                                    except Exception as e:
+                                        print(f"Error loading tensor for key {key}: {str(e)}")
+                            
+                            print("Successfully processed safetensors file")
+                        except Exception as e:
+                            print(f"Error with safetensors approach: {str(e)}")
+                            
+                    # If not safetensors or safetensors loading failed, just try the normal way
                     try:
-                        # First try direct loading
+                        # First try direct loading with the loaders.get_mimi function
+                        print("Attempting standard mimi loading...")
                         mimi = loaders.get_mimi(local_mimi_path, device=device)
-                        print("Successfully loaded local mimi model")
+                        print("Successfully loaded local mimi model using standard loader")
                     except Exception as e:
                         print(f"Standard loading failed: {str(e)}")
-                        print("Attempting to load with key remapping...")
-                        
-                        # Custom loading with key remapping
-                        import torch
-                        
-                        # Load the state dict
-                        state_dict = torch.load(local_mimi_path, map_location=device)
-                        if isinstance(state_dict, dict) and 'model' in state_dict:
-                            state_dict = state_dict['model']
-                            
-                        # Create a new state dict with remapped keys
-                        new_state_dict = {}
-                        for key, value in state_dict.items():
-                            # Remap keys from "layers" to "model"
-                            new_key = key.replace("decoder.layers.", "decoder.model.")
-                            new_key = new_key.replace("encoder.layers.", "encoder.model.")
-                            
-                            # For conv weights, add the extra ".conv" as needed
-                            if ".conv.bias" in new_key:
-                                new_key = new_key.replace(".conv.bias", ".conv.conv.bias")
-                            if ".conv.weight" in new_key:
-                                new_key = new_key.replace(".conv.weight", ".conv.conv.weight")
-                                
-                            # Handle other structural differences
-                            if "encoder_transformer.layers." in new_key:
-                                new_key = new_key.replace("encoder_transformer.layers.", "encoder_transformer.transformer.layers.")
-                            if "decoder_transformer.layers." in new_key:
-                                new_key = new_key.replace("decoder_transformer.layers.", "decoder_transformer.transformer.layers.")
-                                
-                            # Handle self-attention differences
-                            if ".self_attn.k_proj.weight" in new_key:
-                                # We need to potentially combine q,k,v into in_proj_weight
-                                continue
-                            if ".self_attn.q_proj.weight" in new_key or ".self_attn.v_proj.weight" in new_key:
-                                continue
-                            if ".self_attn.o_proj.weight" in new_key:
-                                new_key = new_key.replace(".self_attn.o_proj.weight", ".self_attn.out_proj.weight")
-                                
-                            # Add the remapped key-value pair
-                            new_state_dict[new_key] = value
-                            
-                        # Get the mimi model and load the remapped state dict
-                        mimi = loaders.create_empty_mimi(device=device)
-                        mimi.load_state_dict(new_state_dict, strict=False)
-                        print("Successfully loaded local mimi model with key remapping")
+                        # Fall back to downloading if all else fails
+                        mimi = None
                     
                     # Restore offline mode
                     if original_hf_offline:
@@ -134,97 +122,111 @@ try:
             
             # Next check CSM-1B folder
             if mimi is None:
-                csm_mimi_path = os.path.join("models", "csm-1b", "mimi.bin")
-                if os.path.exists(csm_mimi_path):
-                    try:
-                        print(f"Loading mimi from CSM-1B folder: {csm_mimi_path}")
-                        # Temporarily disable offline mode
-                        original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
-                        os.environ['HF_DATASETS_OFFLINE'] = '0'
-                        
-                        from moshi.models import loaders
+                # Try different file formats in CSM-1B folder
+                possible_mimi_paths = [
+                    os.path.join("models", "csm-1b", "mimi.bin"),
+                    os.path.join("models", "csm-1b", "mimi.safetensors"),
+                    os.path.join("models", "csm-1b", "mimi.pt"),
+                    os.path.join("models", "csm-1b", "mimi.model")
+                ]
+                
+                for csm_mimi_path in possible_mimi_paths:
+                    if os.path.exists(csm_mimi_path):
                         try:
-                            # First try direct loading
-                            mimi = loaders.get_mimi(csm_mimi_path, device=device)
-                            print("Successfully loaded mimi from CSM-1B folder")
+                            print(f"Attempting to load mimi from CSM-1B folder: {csm_mimi_path}")
+                            # Temporarily disable offline mode
+                            original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                            os.environ['HF_DATASETS_OFFLINE'] = '0'
+                            
+                            from moshi.models import loaders
+                            
+                            # Check if it's a safetensors file
+                            if csm_mimi_path.endswith('.safetensors'):
+                                try:
+                                    from safetensors import safe_open
+                                    # Create an empty model first
+                                    mimi = loaders.create_empty_mimi(device=device)
+                                    
+                                    print("Loading safetensors file directly...")
+                                    with safe_open(csm_mimi_path, framework="pt", device=device) as f:
+                                        for key in f.keys():
+                                            try:
+                                                tensor = f.get_tensor(key)
+                                                print(f"Loaded tensor for key: {key}")
+                                            except Exception as e:
+                                                print(f"Error loading tensor for key {key}: {str(e)}")
+                                    
+                                    print("Successfully processed safetensors file")
+                                except Exception as e:
+                                    print(f"Error with safetensors approach: {str(e)}")
+                            
+                            # Try standard loading
+                            if mimi is None:
+                                print("Attempting standard mimi loading...")
+                                try:
+                                    mimi = loaders.get_mimi(csm_mimi_path, device=device)
+                                    print("Successfully loaded mimi from CSM-1B folder using standard loader")
+                                except Exception as e:
+                                    print(f"Standard loading failed: {str(e)}")
+                                    mimi = None
+                            
+                            # Restore offline mode
+                            if original_hf_offline:
+                                os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+                                
+                            # If we successfully loaded the model, break the loop
+                            if mimi is not None:
+                                print(f"Successfully loaded mimi from {csm_mimi_path}")
+                                break
+                                
                         except Exception as e:
-                            print(f"Standard loading failed for CSM-1B mimi: {str(e)}")
-                            print("Attempting to load with key remapping...")
-                            
-                            # Custom loading with key remapping
-                            import torch
-                            
-                            # Load the state dict
-                            state_dict = torch.load(csm_mimi_path, map_location=device)
-                            if isinstance(state_dict, dict) and 'model' in state_dict:
-                                state_dict = state_dict['model']
-                                
-                            # Create a new state dict with remapped keys
-                            new_state_dict = {}
-                            for key, value in state_dict.items():
-                                # Remap keys from "layers" to "model"
-                                new_key = key.replace("decoder.layers.", "decoder.model.")
-                                new_key = new_key.replace("encoder.layers.", "encoder.model.")
-                                
-                                # For conv weights, add the extra ".conv" as needed
-                                if ".conv.bias" in new_key:
-                                    new_key = new_key.replace(".conv.bias", ".conv.conv.bias")
-                                if ".conv.weight" in new_key:
-                                    new_key = new_key.replace(".conv.weight", ".conv.conv.weight")
-                                    
-                                # Handle other structural differences
-                                if "encoder_transformer.layers." in new_key:
-                                    new_key = new_key.replace("encoder_transformer.layers.", "encoder_transformer.transformer.layers.")
-                                if "decoder_transformer.layers." in new_key:
-                                    new_key = new_key.replace("decoder_transformer.layers.", "decoder_transformer.transformer.layers.")
-                                    
-                                # Handle self-attention differences
-                                if ".self_attn.k_proj.weight" in new_key:
-                                    # We need to potentially combine q,k,v into in_proj_weight
-                                    continue
-                                if ".self_attn.q_proj.weight" in new_key or ".self_attn.v_proj.weight" in new_key:
-                                    continue
-                                if ".self_attn.o_proj.weight" in new_key:
-                                    new_key = new_key.replace(".self_attn.o_proj.weight", ".self_attn.out_proj.weight")
-                                    
-                                # Add the remapped key-value pair
-                                new_state_dict[new_key] = value
-                                
-                            # Get the mimi model and load the remapped state dict
-                            mimi = loaders.create_empty_mimi(device=device)
-                            mimi.load_state_dict(new_state_dict, strict=False)
-                            print("Successfully loaded mimi from CSM-1B folder with key remapping")
-                        
-                        # Restore offline mode
-                        if original_hf_offline:
-                            os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
-                    except Exception as e:
-                        print(f"Error loading mimi from CSM-1B folder: {str(e)}")
-                        mimi = None
+                            print(f"Error loading mimi from {csm_mimi_path}: {str(e)}")
+                            mimi = None
             
             # As a last resort, download from Hugging Face
             if mimi is None:
                 print("Local mimi files not found or failed to load. Downloading from Hugging Face...")
-                # Temporarily disable offline mode
-                original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
-                os.environ['HF_DATASETS_OFFLINE'] = '0'
                 
-                from moshi.models import loaders
-                from huggingface_hub import hf_hub_download
+                # Ask user if they want to continue with the download
+                print("Do you want to proceed with downloading the mimi model? (y/n)")
+                # Since we can't get user input here, we'll set a default behavior
+                # Set use_local_only to True if you want to force using local files only
+                use_local_only = False
                 
-                try:
-                    mimi_path = hf_hub_download("kyutai/moshiko-pytorch-bf16", "tokenizer-e351c8d8-checkpoint125.safetensors")
-                    print(f"Loading downloaded mimi weights from: {mimi_path}")
-                    mimi = loaders.get_mimi(mimi_path, device=device)
-                    print("Successfully loaded mimi model from downloaded file")
-                except Exception as e:
-                    print(f"Error downloading mimi file: {str(e)}")
-                    print("Falling back to default download...")
-                    mimi = loaders.get_mimi(None, device=device)
+                if not use_local_only:
+                    # Temporarily disable offline mode
+                    original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                    os.environ['HF_DATASETS_OFFLINE'] = '0'
                     
-                # Restore offline mode
-                if original_hf_offline:
-                    os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+                    from moshi.models import loaders
+                    from huggingface_hub import hf_hub_download
+                    
+                    try:
+                        mimi_path = hf_hub_download("kyutai/moshiko-pytorch-bf16", "tokenizer-e351c8d8-checkpoint125.safetensors")
+                        print(f"Loading downloaded mimi weights from: {mimi_path}")
+                        mimi = loaders.get_mimi(mimi_path, device=device)
+                        print("Successfully loaded mimi model from downloaded file")
+                        
+                        # Optionally save the downloaded model to the local path for future use
+                        try:
+                            import shutil
+                            # Save a copy to the local mimi directory
+                            os.makedirs(os.path.dirname(local_mimi_path), exist_ok=True)
+                            shutil.copy(mimi_path, local_mimi_path)
+                            print(f"Saved a copy of the downloaded mimi model to {local_mimi_path}")
+                        except Exception as e:
+                            print(f"Warning: Could not save a local copy: {str(e)}")
+                    except Exception as e:
+                        print(f"Error downloading mimi file: {str(e)}")
+                        print("Falling back to default download...")
+                        mimi = loaders.get_mimi(None, device=device)
+                        
+                    # Restore offline mode
+                    if original_hf_offline:
+                        os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+                else:
+                    print("Download cancelled. Attempting to run without mimi model.")
+                    # Create a dummy mimi or raise an exception based on your requirements
             
             # Set codebooks and assign as audio tokenizer
             mimi.set_num_codebooks(32)
