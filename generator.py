@@ -1,16 +1,19 @@
 from dataclasses import dataclass
 from typing import List, Tuple
 import os
+import json
 
 import torch
 import torchaudio
 from huggingface_hub import hf_hub_download
 from models import Model, ModelArgs
 from moshi.models import loaders
+from moshi.models.seanet import MimiModel
 from tokenizers.processors import TemplateProcessing
 from transformers import AutoTokenizer
 from watermarking import CSM_1B_GH_WATERMARK, load_watermarker, watermark
 import traceback
+from safetensors.torch import load_file
 
 # Set environment variables to prevent auto-downloading
 os.environ['HF_DATASETS_OFFLINE'] = '1'
@@ -71,25 +74,85 @@ def load_llama3_tokenizer():
     return tokenizer
 
 
-def download_mimi_directly():
-    """Download the mimi file directly from Hugging Face."""
-    try:
-        # Temporarily disable offline mode
-        original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
-        os.environ['HF_DATASETS_OFFLINE'] = '0'
-        
-        print("Downloading mimi file from Hugging Face...")
-        # The exact name might differ for the bin format vs safetensors format
-        mimi_path = hf_hub_download("kyutai/moshiko-pytorch-bf16", "tokenizer-e351c8d8-checkpoint125.safetensors")
-        
-        # Restore offline mode
-        if original_hf_offline:
-            os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+def load_local_mimi(device, local_path=None):
+    """
+    Load the MIMI model from local files in safetensors format.
+    
+    Args:
+        device: The device to load the model on
+        local_path: Path to the local mimi model directory
+    
+    Returns:
+        The loaded MimiModel or None if loading failed
+    """
+    if local_path is None:
+        local_path = os.path.join("models", "mimi")
+    
+    model_path = os.path.join(local_path, "model.safetensors")
+    config_path = os.path.join(local_path, "config.json")
+    preprocessor_config_path = os.path.join(local_path, "preprocessor_config.json")
+    
+    if not os.path.exists(model_path):
+        print(f"Mimi model file not found at {model_path}")
+        return None
+    
+    print(f"Loading mimi from local path: {model_path}")
+    
+    # Load config if available
+    config = {}
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            print(f"Loaded mimi config from {config_path}")
+        except Exception as e:
+            print(f"Error loading mimi config: {str(e)}")
+    
+    # Load preprocessor config if available
+    if os.path.exists(preprocessor_config_path):
+        try:
+            with open(preprocessor_config_path, 'r') as f:
+                preprocessor_config = json.load(f)
+            print(f"Loaded mimi preprocessor config from {preprocessor_config_path}")
             
-        print(f"Successfully downloaded mimi file to: {mimi_path}")
-        return mimi_path
+            # Add relevant preprocessor settings to the config
+            if "sample_rate" in preprocessor_config:
+                config["sample_rate"] = preprocessor_config["sample_rate"]
+        except Exception as e:
+            print(f"Error loading mimi preprocessor config: {str(e)}")
+    
+    try:
+        # Create a MimiModel instance with the config
+        mimi_model = MimiModel(**config).to(device)
+        
+        # Load weights from safetensors file
+        print(f"Loading mimi weights from safetensors file...")
+        state_dict = load_file(model_path, device=device)
+        
+        # Print first few keys for debugging
+        key_list = list(state_dict.keys())
+        print(f"Loaded {len(key_list)} keys from safetensors file.")
+        if key_list:
+            print(f"First few keys: {key_list[:5]}")
+        
+        # Load weights with non-strict setting to handle potential key mismatches
+        missing_keys, unexpected_keys = mimi_model.load_state_dict(state_dict, strict=False)
+        
+        # Print any missing or unexpected keys (limited to first 10)
+        if missing_keys:
+            print(f"Missing {len(missing_keys)} keys, first 10: {missing_keys[:10]}")
+        if unexpected_keys:
+            print(f"Unexpected {len(unexpected_keys)} keys, first 10: {unexpected_keys[:10]}")
+        
+        # Set default sample rate if not in config
+        if not hasattr(mimi_model, 'sample_rate'):
+            setattr(mimi_model, 'sample_rate', 24000)
+            print("Set default sample rate to 24000")
+        
+        print("Successfully loaded local mimi model")
+        return mimi_model
     except Exception as e:
-        print(f"Error downloading mimi: {str(e)}")
+        print(f"Error loading local mimi model: {str(e)}")
         print(traceback.format_exc())
         return None
 
@@ -106,87 +169,61 @@ class Generator:
 
         device = next(model.parameters()).device
         
-        # Try multiple approaches to load the mimi weights
+        # Try to load mimi from local files first
         try:
             print("Attempting to load mimi weights...")
             mimi = None
             
-            # First try downloading directly - this is most likely to work
-            mimi_path = download_mimi_directly()
+            # First try loading from local path
+            local_mimi_dir = os.path.join("models", "mimi")
+            print(f"Checking for local mimi files in {local_mimi_dir}")
             
-            if mimi_path:
+            # Check if the model file exists
+            model_path = os.path.join(local_mimi_dir, "model.safetensors")
+            if os.path.exists(model_path):
+                print(f"Found local mimi file: {model_path}")
+                mimi = load_local_mimi(device, local_mimi_dir)
+            
+            # If local loading failed, try downloading
+            if mimi is None:
+                print("Local mimi loading failed or files not found.")
+                print("Do you want to download mimi from Hugging Face? (downloading automatically)")
+                
+                # Temporarily disable offline mode for download
+                original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                os.environ['HF_DATASETS_OFFLINE'] = '0'
+                
                 try:
+                    mimi_path = hf_hub_download("kyutai/moshiko-pytorch-bf16", "tokenizer-e351c8d8-checkpoint125.safetensors")
                     print(f"Loading downloaded mimi weights from: {mimi_path}")
                     mimi = loaders.get_mimi(mimi_path, device=device)
                     print("Successfully loaded mimi model from downloaded file")
-                except Exception as e:
-                    print(f"Error loading downloaded mimi: {str(e)}")
-                    mimi = None
-            
-            # If still no mimi, try local paths
-            if mimi is None:
-                # Check in models/mimi directory
-                local_mimi_path = os.path.join("models", "mimi", "model.safetensors")
-                
-                if os.path.exists(local_mimi_path):
+                    
+                    # Save downloaded model to local path for future use
                     try:
-                        # Temporarily disable offline mode
-                        original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
-                        os.environ['HF_DATASETS_OFFLINE'] = '0'
-                        
-                        print(f"Trying to load mimi from local path: {local_mimi_path}")
-                        # Skip strict loading which would reject mismatched keys
-                        from moshi.models.seanet import MimiModel
-                        import json
-                        
-                        # Try to load config if available
-                        config_path = os.path.join("models", "mimi", "config.json")
-                        config = {}
-                        if os.path.exists(config_path):
-                            with open(config_path, 'r') as f:
-                                config = json.load(f)
-                        
-                        # Create model instance
-                        mimi_model = MimiModel(**config).to(device)
-                        
-                        # Load state dict with strict=False to ignore mismatches
-                        from safetensors.torch import load_file
-                        state_dict = load_file(local_mimi_path, device=device)
-                        mimi_model.load_state_dict(state_dict, strict=False)
-                        
-                        # Set up as mimi
-                        mimi = mimi_model
-                        # Standard sample rate for mimi
-                        setattr(mimi, 'sample_rate', 24000)
-                        print("Successfully loaded local mimi model with non-strict loading")
-                        
-                        # Restore offline mode
-                        if original_hf_offline:
-                            os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
-                    except Exception as local_e:
-                        print(f"Error loading local mimi: {str(local_e)}")
-                        print(traceback.format_exc())
-                        mimi = None
+                        os.makedirs(local_mimi_dir, exist_ok=True)
+                        import shutil
+                        local_model_path = os.path.join(local_mimi_dir, "model.safetensors")
+                        shutil.copy(mimi_path, local_model_path)
+                        print(f"Saved downloaded mimi model to {local_model_path} for future use")
+                    except Exception as e:
+                        print(f"Error saving downloaded model locally: {str(e)}")
+                except Exception as e:
+                    print(f"Error downloading mimi: {str(e)}")
+                    # Fall back to default loader with None path
+                    print("Falling back to default mimi loader...")
+                    mimi = loaders.get_mimi(None, device=device)
                 
-                # If still no mimi, fall back to standard download
-                if mimi is None:
-                    print("All local loading attempts failed. Falling back to standard download...")
-                    # Temporarily disable offline mode
-                    original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
-                    os.environ['HF_DATASETS_OFFLINE'] = '0'
-                    
-                    mimi = loaders.get_mimi(None, device=device)  # Let it download the default
-                    
-                    # Restore offline mode
-                    if original_hf_offline:
-                        os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+                # Restore offline mode
+                if original_hf_offline:
+                    os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
             
             # Set codebooks and assign as audio tokenizer
             mimi.set_num_codebooks(32)
             self._audio_tokenizer = mimi
             
         except Exception as e:
-            print(f"Error loading mimi weights: {str(e)}")
+            print(f"Error during mimi initialization: {str(e)}")
             print(traceback.format_exc())
             raise
         
