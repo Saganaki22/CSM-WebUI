@@ -127,7 +127,7 @@ run_fixed.bat
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/CSM-WebUI.git
+git clone https://github.com/Saganaki22/CSM-WebUI.git
 cd CSM-WebUI
 
 # Run the WSL setup script
