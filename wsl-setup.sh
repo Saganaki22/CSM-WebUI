@@ -24,7 +24,7 @@ if ! command -v python3.10 &> /dev/null; then
 fi
 
 # Navigate to the CSM-WebUI directory
-cd ~/csm || { echo "Failed to navigate to csm directory"; exit 1; }
+cd ~/CSM-WebUI || { echo "Failed to navigate to csm directory"; exit 1; }
 
 # Create virtual environment if it doesn't exist
 if [ ! -d ".venv" ]; then
@@ -60,7 +60,7 @@ pip install gradio
 # Create a run script
 cat > run_gradio.sh << 'EOL'
 #!/bin/bash
-cd ~/csm
+cd ~/CSM-WebUI
 source .venv/bin/activate
 python wsl-gradio.py
 EOL
@@ -82,7 +82,9 @@ echo "2. Llama-3.2-1B Tokenizer:"
 echo "   - https://huggingface.co/meta-llama/Llama-3.2-1B/tree/main"
 echo "   - Save tokenizer files to: models/llama3.2/**"
 echo ""
-echo ""
+echo "3. mimi model, config & preprocessor"
+echo "   - https://huggingface.co/kyutai/mimi/tree/main"
+echo "  - Save tokenizer files to: models/mimi/**"
 echo "Please ensure these files are in the correct locations before running the application."
 echo ""
 
