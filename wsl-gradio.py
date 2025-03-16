@@ -35,6 +35,21 @@ if os.path.exists(csm_webui_dir) and csm_webui_dir not in sys.path:
     print(f"Adding CSM-WebUI directory to path: {csm_webui_dir}")
     sys.path.append(csm_webui_dir)
 
+def debug_path_check(file_path):
+    """Debug helper to check if a file exists at the given path."""
+    abs_path = os.path.abspath(file_path)
+    exists = os.path.exists(file_path)
+    dir_exists = os.path.exists(os.path.dirname(file_path))
+    
+    print(f"Debug path check for: {file_path}")
+    print(f"  Absolute path: {abs_path}")
+    print(f"  File exists: {exists}")
+    print(f"  Directory exists: {dir_exists}")
+    if exists:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        print(f"  File size: {size_mb:.2f} MB")
+    return exists
+
 # Copy generator.py to current directory if it doesn't exist
 current_generator_path = os.path.join(current_dir, "generator.py")
 if not os.path.exists(current_generator_path):
@@ -67,21 +82,6 @@ if not os.path.exists(current_generator_path):
     
     if not generator_found:
         print("Warning: generator.py not found in any standard location.")
-
-def debug_path_check(file_path):
-    """Debug helper to check if a file exists at the given path."""
-    abs_path = os.path.abspath(file_path)
-    exists = os.path.exists(file_path)
-    dir_exists = os.path.exists(os.path.dirname(file_path))
-    
-    print(f"Debug path check for: {file_path}")
-    print(f"  Absolute path: {abs_path}")
-    print(f"  File exists: {exists}")
-    print(f"  Directory exists: {dir_exists}")
-    if exists:
-        size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        print(f"  File size: {size_mb:.2f} MB")
-    return exists
 
 # Import the CSM model functions
 try:
@@ -326,7 +326,7 @@ def load_llama3_tokenizer():
         # Optional: Show a test tokenization
         test_text = "Hello, this is a test of the local tokenizer."
         tokens = tokenizer.encode(test_text)
-        print(f"Test tokenization of '{test_text}':")
+        print(f"Test tokenization of \'{test_text}\':")
         print(f"Token IDs: {tokens[:10]}... (showing first 10 tokens)")
     else:
         print(f"Local tokenizer not found at {local_tokenizer_path}. Downloading from Hugging Face.")
@@ -654,7 +654,7 @@ def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda", config_path: s
         device: Device to load the model on ('cuda' or 'cpu')
         config_path: Optional path to a config.json file
     """
-    print(f"\n===== LOADING CSM MODEL =====")
+    print(f"\\n===== LOADING CSM MODEL =====")
     print(f"Loading CSM model from: {ckpt_path}")
     debug_path_check(ckpt_path)
     
