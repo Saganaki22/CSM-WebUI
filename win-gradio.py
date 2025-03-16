@@ -418,7 +418,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
         model_path = gr.Textbox(
             label="Model Path",
             placeholder="Path to the CSM model file model.safetensors",
-            value="models/model.safetensors"
+            value="models/csm-1b/model.safetensors"
         )
         with gr.Column():
             load_button = gr.Button("Load Model")
@@ -426,7 +426,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
         model_status = gr.Textbox(label="Model Status", interactive=False)
     
     gr.Markdown("""
-    **Note:** Make sure you DL the model from [Hugging Face](https://huggingface.co/sesame/csm-1b) first.
+    **Note:** Make sure you DL the models from HF [csm-1b](https://huggingface.co/drbaph/CSM-1B/tree/main) [Llama-3.2-1b](https://huggingface.co/unsloth/Llama-3.2-1B/tree/main) first.
     
     **Windows Note:** This version uses the triton-windows package instead of triton.
     """)
@@ -695,7 +695,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
     gr.Markdown("""
     ### Links
     
-    [GitHub Repository](https://github.com/Saganaki22/CSM-WebUI) [CSM Repository](https://github.com/SesameAILabs/csm)   [Official Hugging Face Repository](https://huggingface.co/sesame/csm-1b)  [Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B)
+    [GitHub Repository](https://github.com/Saganaki22/CSM-WebUI) [CSM Repository](https://github.com/SesameAILabs/csm)   [Official HF Repo](https://huggingface.co/sesame/csm-1b)  [Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B)
     """, elem_classes=["center-aligned", "no-bullets"])
 
 # Launch the app
