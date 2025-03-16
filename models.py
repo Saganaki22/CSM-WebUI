@@ -1,12 +1,33 @@
 from dataclasses import dataclass
+import os
 
 import torch
 import torch.nn as nn
 import torchtune
 from torchtune.models import llama3_2
 
+# Set environment variables to prevent auto-downloading
+os.environ['HF_DATASETS_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+
+def debug_path_check(file_path):
+    """Debug helper to check if a file exists at the given path."""
+    abs_path = os.path.abspath(file_path)
+    exists = os.path.exists(file_path)
+    dir_exists = os.path.exists(os.path.dirname(file_path))
+    
+    print(f"Debug path check for: {file_path}")
+    print(f"  Absolute path: {abs_path}")
+    print(f"  File exists: {exists}")
+    print(f"  Directory exists: {dir_exists}")
+    if exists:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        print(f"  File size: {size_mb:.2f} MB")
+    return exists
+
 
 def llama3_2_1B() -> torchtune.modules.transformer.TransformerDecoder:
+    print("Initializing llama3_2_1B backbone model...")
     return llama3_2.llama3_2(
         vocab_size=128_256,
         num_layers=16,
@@ -23,6 +44,7 @@ def llama3_2_1B() -> torchtune.modules.transformer.TransformerDecoder:
 
 
 def llama3_2_100M() -> torchtune.modules.transformer.TransformerDecoder:
+    print("Initializing llama3_2_100M decoder model...")
     return llama3_2.llama3_2(
         vocab_size=128_256,
         num_layers=4,
@@ -45,6 +67,7 @@ FLAVORS = {
 
 
 def _prepare_transformer(model):
+    print(f"Preparing transformer model...")
     embed_dim = model.tok_embeddings.embedding_dim
     model.tok_embeddings = nn.Identity()
     model.output = nn.Identity()
@@ -98,20 +121,32 @@ class ModelArgs:
 class Model(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
+        print(f"Initializing Model with args: {args}")
         self.args = args
-
+        
+        # Prevent auto-downloading by setting environment variables
+        os.environ['HF_DATASETS_OFFLINE'] = '1'
+        os.environ['TRANSFORMERS_OFFLINE'] = '1'
+        
+        print(f"Creating backbone model with flavor: {args.backbone_flavor}")
         self.backbone, backbone_dim = _prepare_transformer(FLAVORS[args.backbone_flavor]())
+        
+        print(f"Creating decoder model with flavor: {args.decoder_flavor}")
         self.decoder, decoder_dim = _prepare_transformer(FLAVORS[args.decoder_flavor]())
 
+        print(f"Creating embeddings with text_vocab_size={args.text_vocab_size}, backbone_dim={backbone_dim}")
         self.text_embeddings = nn.Embedding(args.text_vocab_size, backbone_dim)
         self.audio_embeddings = nn.Embedding(args.audio_vocab_size * args.audio_num_codebooks, backbone_dim)
 
+        print("Creating projection and heads...")
         self.projection = nn.Linear(backbone_dim, decoder_dim, bias=False)
         self.codebook0_head = nn.Linear(backbone_dim, args.audio_vocab_size, bias=False)
         self.audio_head = nn.Parameter(torch.empty(args.audio_num_codebooks - 1, decoder_dim, args.audio_vocab_size))
+        print("Model initialization complete")
 
     def setup_caches(self, max_batch_size: int) -> torch.Tensor:
         """Setup KV caches and return a causal mask."""
+        print(f"Setting up caches with max_batch_size={max_batch_size}")
         dtype = next(self.parameters()).dtype
         device = next(self.parameters()).device
 
@@ -119,8 +154,10 @@ class Model(nn.Module):
             self.backbone.setup_caches(max_batch_size, dtype)
             self.decoder.setup_caches(max_batch_size, dtype, decoder_max_seq_len=self.args.audio_num_codebooks)
 
+        print("Creating causal masks...")
         self.register_buffer("backbone_causal_mask", _create_causal_mask(self.backbone.max_seq_len, device))
         self.register_buffer("decoder_causal_mask", _create_causal_mask(self.args.audio_num_codebooks, device))
+        print("Cache setup complete")
 
     def generate_frame(
         self,
@@ -177,6 +214,7 @@ class Model(nn.Module):
         return curr_sample
 
     def reset_caches(self):
+        print("Resetting model caches...")
         self.backbone.reset_caches()
         self.decoder.reset_caches()
 
