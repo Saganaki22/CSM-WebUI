@@ -2,18 +2,18 @@ from dataclasses import dataclass
 from typing import List, Tuple
 import os
 import json
+import sys
 
 import torch
 import torchaudio
-from huggingface_hub import hf_hub_download
-from models import Model, ModelArgs
-from moshi.models import loaders
-from moshi.models.seanet import MimiModel
-from tokenizers.processors import TemplateProcessing
-from transformers import AutoTokenizer
-from watermarking import CSM_1B_GH_WATERMARK, load_watermarker, watermark
 import traceback
 from safetensors.torch import load_file
+
+# Add proper path for dependencies
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+# Import after path setup
+from models import Model, ModelArgs
 
 # Set environment variables to prevent auto-downloading
 os.environ['HF_DATASETS_OFFLINE'] = '1'
@@ -27,41 +27,57 @@ class Segment:
     audio: torch.Tensor
 
 
+def debug_path_check(file_path):
+    """Debug helper to check if a file exists at the given path."""
+    abs_path = os.path.abspath(file_path)
+    exists = os.path.exists(file_path)
+    dir_exists = os.path.exists(os.path.dirname(file_path))
+    
+    print(f"Debug path check for: {file_path}")
+    print(f"  Absolute path: {abs_path}")
+    print(f"  File exists: {exists}")
+    print(f"  Directory exists: {dir_exists}")
+    if exists:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        print(f"  File size: {size_mb:.2f} MB")
+    return exists
+
+
 def load_llama3_tokenizer():
     """
     Load Llama tokenizer from local path if available, otherwise from HF
     """
+    try:
+        from transformers import AutoTokenizer
+        from tokenizers.processors import TemplateProcessing
+    except ImportError:
+        print("Failed to import tokenizers. Please install transformers and tokenizers.")
+        raise
+    
     # Use os.path.join for proper path handling
     local_tokenizer_path = os.path.join("models", "llama3.2")
     
     if os.path.exists(os.path.join(local_tokenizer_path, "tokenizer.json")):
-        # List all tokenizer files found in the directory
-        tokenizer_files = [f for f in os.listdir(local_tokenizer_path) 
-                          if f.startswith("tokenizer") or f == "special_tokens_map.json"]
+        print(f"Found local Llama tokenizer files in {local_tokenizer_path}")
         
-        print(f"Found local Llama tokenizer files in {local_tokenizer_path}:")
-        for file in tokenizer_files:
-            file_size = os.path.getsize(os.path.join(local_tokenizer_path, file)) / 1024  # KB
-            print(f"  - {file} ({file_size:.2f} KB)")
-            
-        print("Loading local tokenizer...")
-        tokenizer = AutoTokenizer.from_pretrained(local_tokenizer_path)
-        
-        # Verify tokenizer was loaded correctly by showing vocab size
-        print(f"Successfully loaded local tokenizer!")
-        print(f"Tokenizer vocab size: {tokenizer.vocab_size}")
-        print(f"Tokenizer model: {tokenizer.name_or_path}")
-        
-        # Optional: Show a test tokenization
-        test_text = "Hello, this is a test of the local tokenizer."
-        tokens = tokenizer.encode(test_text)
-        print(f"Test tokenization of '{test_text}':")
-        print(f"Token IDs: {tokens[:10]}... (showing first 10 tokens)")
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(local_tokenizer_path, local_files_only=True)
+            print(f"Successfully loaded local tokenizer!")
+        except Exception as e:
+            print(f"Error loading local tokenizer: {str(e)}")
+            print("Falling back to HuggingFace download")
+            tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
     else:
         print(f"Local tokenizer not found at {local_tokenizer_path}. Downloading from Hugging Face.")
-        tokenizer_name = "meta-llama/Llama-3.2-1B"
-        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
-        print(f"Downloaded tokenizer from {tokenizer_name}")
+        # Temporarily disable offline mode
+        original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+        os.environ['HF_DATASETS_OFFLINE'] = '0'
+        
+        tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.2-1B")
+        
+        # Restore offline mode
+        if original_hf_offline:
+            os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
     
     bos = tokenizer.bos_token
     eos = tokenizer.eos_token
@@ -74,87 +90,97 @@ def load_llama3_tokenizer():
     return tokenizer
 
 
-def load_local_mimi(device, local_path=None):
-    """
-    Load the MIMI model from local files in safetensors format.
-    
-    Args:
-        device: The device to load the model on
-        local_path: Path to the local mimi model directory
-    
-    Returns:
-        The loaded MimiModel or None if loading failed
-    """
-    if local_path is None:
-        local_path = os.path.join("models", "mimi")
-    
-    model_path = os.path.join(local_path, "model.safetensors")
-    config_path = os.path.join(local_path, "config.json")
-    preprocessor_config_path = os.path.join(local_path, "preprocessor_config.json")
-    
-    if not os.path.exists(model_path):
-        print(f"Mimi model file not found at {model_path}")
-        return None
-    
-    print(f"Loading mimi from local path: {model_path}")
-    
-    # Load config if available
-    config = {}
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-            print(f"Loaded mimi config from {config_path}")
-        except Exception as e:
-            print(f"Error loading mimi config: {str(e)}")
-    
-    # Load preprocessor config if available
-    if os.path.exists(preprocessor_config_path):
-        try:
-            with open(preprocessor_config_path, 'r') as f:
-                preprocessor_config = json.load(f)
-            print(f"Loaded mimi preprocessor config from {preprocessor_config_path}")
-            
-            # Add relevant preprocessor settings to the config
-            if "sample_rate" in preprocessor_config:
-                config["sample_rate"] = preprocessor_config["sample_rate"]
-        except Exception as e:
-            print(f"Error loading mimi preprocessor config: {str(e)}")
-    
+def load_mimi_model(device):
+    """Load the mimi model with proper error handling"""
     try:
-        # Create a MimiModel instance with the config
-        mimi_model = MimiModel(**config).to(device)
+        # First try to import the required modules
+        try:
+            from moshi.models import loaders
+            from moshi.models.seanet import MimiModel
+            from huggingface_hub import hf_hub_download
+        except ImportError as e:
+            print(f"Error importing mimi dependencies: {e}")
+            print("Please make sure moshi is installed correctly with: pip install moshi==0.2.2")
+            raise
         
-        # Load weights from safetensors file
-        print(f"Loading mimi weights from safetensors file...")
-        state_dict = load_file(model_path, device=device)
+        # Try to load from local path first
+        local_mimi_dir = os.path.join("models", "mimi")
+        model_path = os.path.join(local_mimi_dir, "model.safetensors")
+        config_path = os.path.join(local_mimi_dir, "config.json")
         
-        # Print first few keys for debugging
-        key_list = list(state_dict.keys())
-        print(f"Loaded {len(key_list)} keys from safetensors file.")
-        if key_list:
-            print(f"First few keys: {key_list[:5]}")
+        if os.path.exists(model_path):
+            print(f"Found local mimi model at {model_path}")
+            
+            # Load config if available
+            config = {}
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r') as f:
+                        config = json.load(f)
+                    print(f"Loaded config from {config_path}")
+                except Exception as e:
+                    print(f"Error loading config: {e}")
+            
+            # Create model instance
+            try:
+                mimi_model = MimiModel(**config).to(device)
+                
+                # Load weights
+                state_dict = load_file(model_path, device=device)
+                mimi_model.load_state_dict(state_dict, strict=False)
+                
+                # Set default sample rate if not in config
+                if not hasattr(mimi_model, 'sample_rate'):
+                    setattr(mimi_model, 'sample_rate', 24000)
+                
+                print("Successfully loaded local mimi model")
+                mimi_model.set_num_codebooks(32)
+                return mimi_model
+            except Exception as e:
+                print(f"Error loading local mimi model: {e}")
+                print(traceback.format_exc())
         
-        # Load weights with non-strict setting to handle potential key mismatches
-        missing_keys, unexpected_keys = mimi_model.load_state_dict(state_dict, strict=False)
+        # If local loading failed, download from HF
+        print("Local mimi model not found or failed to load. Downloading from HuggingFace...")
         
-        # Print any missing or unexpected keys (limited to first 10)
-        if missing_keys:
-            print(f"Missing {len(missing_keys)} keys, first 10: {missing_keys[:10]}")
-        if unexpected_keys:
-            print(f"Unexpected {len(unexpected_keys)} keys, first 10: {unexpected_keys[:10]}")
+        # Temporarily disable offline mode
+        original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+        os.environ['HF_DATASETS_OFFLINE'] = '0'
         
-        # Set default sample rate if not in config
-        if not hasattr(mimi_model, 'sample_rate'):
-            setattr(mimi_model, 'sample_rate', 24000)
-            print("Set default sample rate to 24000")
-        
-        print("Successfully loaded local mimi model")
-        return mimi_model
+        try:
+            # Try to download and load model
+            mimi_path = hf_hub_download("kyutai/moshiko-pytorch-bf16", "tokenizer-e351c8d8-checkpoint125.safetensors")
+            print(f"Downloaded mimi from {mimi_path}")
+            mimi = loaders.get_mimi(mimi_path, device=device)
+            
+            # Save a copy locally for future use
+            try:
+                os.makedirs(local_mimi_dir, exist_ok=True)
+                import shutil
+                shutil.copy(mimi_path, model_path)
+                print(f"Saved a copy to {model_path} for future use")
+            except Exception as e:
+                print(f"Warning: Failed to save local copy: {e}")
+            
+            mimi.set_num_codebooks(32)
+            return mimi
+        except Exception as e:
+            print(f"Error downloading mimi: {e}")
+            print(traceback.format_exc())
+            
+            # Last resort - try the default loader
+            print("Trying default mimi loader...")
+            mimi = loaders.get_mimi(None, device=device)
+            mimi.set_num_codebooks(32)
+            return mimi
+        finally:
+            # Restore offline mode
+            if original_hf_offline:
+                os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
     except Exception as e:
-        print(f"Error loading local mimi model: {str(e)}")
+        print(f"Critical error initializing mimi: {e}")
         print(traceback.format_exc())
-        return None
+        raise
 
 
 class Generator:
@@ -165,88 +191,39 @@ class Generator:
         self._model = model
         self._model.setup_caches(1)
 
-        self._text_tokenizer = load_llama3_tokenizer()
-
         device = next(model.parameters()).device
         
-        # Try to load mimi from local files first
-        try:
-            print("Attempting to load mimi weights...")
-            mimi = None
-            
-            # First try loading from local path
-            local_mimi_dir = os.path.join("models", "mimi")
-            print(f"Checking for local mimi files in {local_mimi_dir}")
-            
-            # Check if the model file exists
-            model_path = os.path.join(local_mimi_dir, "model.safetensors")
-            if os.path.exists(model_path):
-                print(f"Found local mimi file: {model_path}")
-                mimi = load_local_mimi(device, local_mimi_dir)
-            
-            # If local loading failed, try downloading
-            if mimi is None:
-                print("Local mimi loading failed or files not found.")
-                print("Do you want to download mimi from Hugging Face? (downloading automatically)")
-                
-                # Temporarily disable offline mode for download
-                original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
-                os.environ['HF_DATASETS_OFFLINE'] = '0'
-                
-                try:
-                    mimi_path = hf_hub_download("kyutai/moshiko-pytorch-bf16", "tokenizer-e351c8d8-checkpoint125.safetensors")
-                    print(f"Loading downloaded mimi weights from: {mimi_path}")
-                    mimi = loaders.get_mimi(mimi_path, device=device)
-                    print("Successfully loaded mimi model from downloaded file")
-                    
-                    # Save downloaded model to local path for future use
-                    try:
-                        os.makedirs(local_mimi_dir, exist_ok=True)
-                        import shutil
-                        local_model_path = os.path.join(local_mimi_dir, "model.safetensors")
-                        shutil.copy(mimi_path, local_model_path)
-                        print(f"Saved downloaded mimi model to {local_model_path} for future use")
-                    except Exception as e:
-                        print(f"Error saving downloaded model locally: {str(e)}")
-                except Exception as e:
-                    print(f"Error downloading mimi: {str(e)}")
-                    # Fall back to default loader with None path
-                    print("Falling back to default mimi loader...")
-                    mimi = loaders.get_mimi(None, device=device)
-                
-                # Restore offline mode
-                if original_hf_offline:
-                    os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
-            
-            # Set codebooks and assign as audio tokenizer
-            mimi.set_num_codebooks(32)
-            self._audio_tokenizer = mimi
-            
-        except Exception as e:
-            print(f"Error during mimi initialization: {str(e)}")
-            print(traceback.format_exc())
-            raise
+        # Load tokenizer
+        print("Loading text tokenizer...")
+        self._text_tokenizer = load_llama3_tokenizer()
         
+        # Load mimi model
+        print("Loading audio tokenizer (mimi)...")
+        self._audio_tokenizer = load_mimi_model(device)
+        
+        # Load watermarker if available
         try:
             print("Loading watermarker...")
-            # Look for a local watermarker file
             watermarker_path = os.path.join("models", "csm-1b", "watermarker.pt")
             
             if os.path.exists(watermarker_path):
-                print(f"Loading watermarker from local path: {watermarker_path}")
-                self._watermarker = load_watermarker(device=device, ckpt_path=watermarker_path)
+                try:
+                    from watermarking import load_watermarker
+                    self._watermarker = load_watermarker(device=device, ckpt_path=watermarker_path)
+                    print("Watermarker loaded successfully")
+                except Exception as e:
+                    print(f"Error loading watermarker: {e}")
+                    self._watermarker = None
             else:
-                # Skip watermarking if file not available
                 print("Watermarker file not found. Watermarking will be disabled.")
                 self._watermarker = None
         except Exception as e:
-            print(f"Error loading watermarker: {str(e)}")
-            print(traceback.format_exc())
-            print("Setting watermarker to None - watermarking will be skipped")
+            print(f"Error setting up watermarker: {e}")
             self._watermarker = None
 
-        self.sample_rate = mimi.sample_rate
+        self.sample_rate = self._audio_tokenizer.sample_rate
         self.device = device
+        print(f"Generator initialized with sample rate: {self.sample_rate}")
 
     def _tokenize_text_segment(self, text: str, speaker: int) -> Tuple[torch.Tensor, torch.Tensor]:
         frame_tokens = []
@@ -346,32 +323,17 @@ class Generator:
 
         # Apply watermark if watermarker is available
         if self._watermarker is not None:
-            # This applies an imperceptible watermark to identify audio as AI-generated.
-            # Watermarking ensures transparency, dissuades misuse, and enables traceability.
-            # Please be a responsible AI citizen and keep the watermarking in place.
-            # If using CSM 1B in another application, use your own private key and keep it secret.
-            audio, wm_sample_rate = watermark(self._watermarker, audio, self.sample_rate, CSM_1B_GH_WATERMARK)
-            audio = torchaudio.functional.resample(audio, orig_freq=wm_sample_rate, new_freq=self.sample_rate)
+            try:
+                from watermarking import watermark, CSM_1B_GH_WATERMARK
+                audio, wm_sample_rate = watermark(self._watermarker, audio, self.sample_rate, CSM_1B_GH_WATERMARK)
+                audio = torchaudio.functional.resample(audio, orig_freq=wm_sample_rate, new_freq=self.sample_rate)
+            except Exception as e:
+                print(f"Error applying watermark: {e}")
+                print("Continuing without watermark")
         else:
             print("Skipping watermarking - watermarker not available")
 
         return audio
-
-
-def debug_path_check(file_path):
-    """Debug helper to check if a file exists at the given path."""
-    abs_path = os.path.abspath(file_path)
-    exists = os.path.exists(file_path)
-    dir_exists = os.path.exists(os.path.dirname(file_path))
-    
-    print(f"Debug path check for: {file_path}")
-    print(f"  Absolute path: {abs_path}")
-    print(f"  File exists: {exists}")
-    print(f"  Directory exists: {dir_exists}")
-    if exists:
-        size_mb = os.path.getsize(file_path) / (1024 * 1024)
-        print(f"  File size: {size_mb:.2f} MB")
-    return exists
 
 
 def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda", config_path: str = None) -> Generator:
@@ -383,7 +345,7 @@ def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda", config_path: s
         device: Device to load the model on ('cuda' or 'cpu')
         config_path: Optional path to a config.json file
     """
-    print(f"Loading model weights...")
+    print(f"\n===== LOADING CSM MODEL =====")
     print(f"Loading CSM model from: {ckpt_path}")
     debug_path_check(ckpt_path)
     
@@ -409,7 +371,6 @@ def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda", config_path: s
     if config_exists:
         print(f"Using configuration from: {config_path}")
         try:
-            import json
             with open(config_path, 'r') as f:
                 config = json.load(f)
                 print(f"Loaded configuration with keys: {list(config.keys())}")
@@ -440,7 +401,6 @@ def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda", config_path: s
     print(f"Loading model weights...")
     if ckpt_path.endswith('.safetensors'):
         try:
-            from safetensors.torch import load_file
             print(f"Using safetensors to load {ckpt_path}")
             state_dict = load_file(ckpt_path, device=device)
             print(f"Successfully loaded state dict with {len(state_dict)} keys")
