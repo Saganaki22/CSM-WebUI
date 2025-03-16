@@ -50,10 +50,10 @@ try:
         self._model = model
         self._model.setup_caches(1)
 
-         # Fix: Import and use the module-level function
-         from generator import load_llama3_tokenizer
+        # Fix: Import and use the module-level function
+        from generator import load_llama3_tokenizer
 
-        self._text_tokenizer = self.load_llama3_tokenizer()
+        self._text_tokenizer = load_llama3_tokenizer()
 
         device = next(model.parameters()).device
         
