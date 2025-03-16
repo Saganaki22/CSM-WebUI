@@ -383,7 +383,7 @@ def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda", config_path: s
         device: Device to load the model on ('cuda' or 'cpu')
         config_path: Optional path to a config.json file
     """
-    print(f"\n===== LOADING CSM MODEL =====")
+    print(f"Loading model weights...")
     print(f"Loading CSM model from: {ckpt_path}")
     debug_path_check(ckpt_path)
     
