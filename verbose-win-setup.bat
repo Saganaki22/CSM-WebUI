@@ -238,91 +238,6 @@ echo.
 echo [SUCCESS] Package installation complete.
 echo.
 
-REM --- HUGGINGFACE & MODEL SETUP ---
-echo [8/8] Setting up HuggingFace and downloading model...
-
-REM Reinstall huggingface_hub to ensure it's properly installed
-echo Reinstalling huggingface_hub...
-pip install --force-reinstall huggingface_hub==0.28.1 --verbose
-if %errorlevel% neq 0 (
-    echo [ERROR] Failed to reinstall huggingface_hub.
-    pause
-    exit /b 1
-)
-
-REM Prompt for HuggingFace login
-echo.
-echo ================================================
-echo HUGGINGFACE LOGIN
-echo ================================================
-echo You need to log in to HuggingFace to download models.
-echo If you don't have an account, please create one at https://huggingface.co/join
-echo.
-set /p hf_login="Do you want to login to HuggingFace now? [Y/n]: "
-if /I "!hf_login!"=="n" (
-    echo.
-    echo Skipping HuggingFace login. You might need to log in later to download models.
-    echo You can login anytime by running: huggingface-cli login
-    echo.
-) else (
-    huggingface-cli login
-)
-
-REM Create and check models directory
-if not exist models (
-    echo Creating models directory...
-    mkdir models
-    echo.
-    echo ================================================
-    echo MODEL DOWNLOAD
-    echo ================================================
-    echo You need to download the CSM model from HuggingFace:
-    echo https://huggingface.co/drbaph/CSM-1B/resolve/main/model.safetensors
-    echo.
-    set /p download_now="Do you want to download the model now? [Y/n]: "
-    if /I "!download_now!"=="n" (
-        echo Skipping model download. Remember to download it manually.
-    ) else (
-        echo Downloading CSM model (this may take some time)...
-        echo Command being executed:
-        echo python -c "from huggingface_hub import hf_hub_download; import os; os.makedirs('models', exist_ok=True); hf_hub_download(repo_id='drbaph/CSM-1B', filename='model.safetensors', local_dir='models', local_dir_use_symlinks=False); print('Model downloaded successfully!')"
-        python -c "from huggingface_hub import hf_hub_download; import os; os.makedirs('models', exist_ok=True); hf_hub_download(repo_id='drbaph/CSM-1B', filename='model.safetensors', local_dir='models', local_dir_use_symlinks=False); print('Model downloaded successfully!')"
-        if %errorlevel% neq 0 (
-            echo [ERROR] Failed to download model. Please download it manually from:
-            echo https://huggingface.co/drbaph/CSM-1B/resolve/main/model.safetensors
-        )
-    )
-) else (
-    echo models directory already exists, checking for model file...
-    if not exist models\model.safetensors (
-        echo Model file not found. Please download it from:
-        echo https://huggingface.co/drbaph/CSM-1B/resolve/main/model.safetensors
-        echo.
-        set /p download_now="Do you want to download the model now? [Y/n]: "
-        if /I "!download_now!"=="n" (
-            echo Skipping model download. Remember to download it manually.
-        ) else (
-            echo Downloading CSM model (this may take some time)...
-            echo Command being executed:
-            echo python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='drbaph/CSM-1B', filename='model.safetensors', local_dir='models', local_dir_use_symlinks=False); print('Model downloaded successfully!')"
-            python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='drbaph/CSM-1B', filename='model.safetensors', local_dir='models', local_dir_use_symlinks=False); print('Model downloaded successfully!')"
-            if %errorlevel% neq 0 (
-                echo [ERROR] Failed to download model. Please download it manually from:
-                echo https://huggingface.co/drbaph/CSM-1B/resolve/main/model.safetensors
-            )
-        )
-    ) else (
-        echo [SUCCESS] Model file found in models directory.
-    )
-)
-
-REM Create sounds directory
-if not exist sounds (
-    echo Creating sounds directory...
-    mkdir sounds
-    echo You can place audio sample files (like man.mp3, woman.mp3) in this folder.
-)
-
 REM Create run script
 echo Creating run_gradio.bat script...
 if not exist run_gradio.bat (
@@ -394,11 +309,11 @@ echo ===========================================================
 
 echo.
 echo Setup complete!
-if not exist models\model.safetensors (
+if not exist models\csm-1b\model.safetensors (
     echo.
     echo [WARNING] Model file not found. Please download it manually from:
     echo https://huggingface.co/drbaph/CSM-1B/resolve/main/model.safetensors
-    echo And place it in the models directory.
+    echo And place it in the models directory along with the config.json file
     echo.
 )
 
