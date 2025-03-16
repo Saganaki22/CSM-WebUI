@@ -71,10 +71,59 @@ try:
                     original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
                     os.environ['HF_DATASETS_OFFLINE'] = '0'
                     
-                    # Try standard loader with local file
+                    # Add custom state_dict loading with key remapping
                     from moshi.models import loaders
-                    mimi = loaders.get_mimi(local_mimi_path, device=device)
-                    print("Successfully loaded local mimi model")
+                    try:
+                        # First try direct loading
+                        mimi = loaders.get_mimi(local_mimi_path, device=device)
+                        print("Successfully loaded local mimi model")
+                    except Exception as e:
+                        print(f"Standard loading failed: {str(e)}")
+                        print("Attempting to load with key remapping...")
+                        
+                        # Custom loading with key remapping
+                        import torch
+                        
+                        # Load the state dict
+                        state_dict = torch.load(local_mimi_path, map_location=device)
+                        if isinstance(state_dict, dict) and 'model' in state_dict:
+                            state_dict = state_dict['model']
+                            
+                        # Create a new state dict with remapped keys
+                        new_state_dict = {}
+                        for key, value in state_dict.items():
+                            # Remap keys from "layers" to "model"
+                            new_key = key.replace("decoder.layers.", "decoder.model.")
+                            new_key = new_key.replace("encoder.layers.", "encoder.model.")
+                            
+                            # For conv weights, add the extra ".conv" as needed
+                            if ".conv.bias" in new_key:
+                                new_key = new_key.replace(".conv.bias", ".conv.conv.bias")
+                            if ".conv.weight" in new_key:
+                                new_key = new_key.replace(".conv.weight", ".conv.conv.weight")
+                                
+                            # Handle other structural differences
+                            if "encoder_transformer.layers." in new_key:
+                                new_key = new_key.replace("encoder_transformer.layers.", "encoder_transformer.transformer.layers.")
+                            if "decoder_transformer.layers." in new_key:
+                                new_key = new_key.replace("decoder_transformer.layers.", "decoder_transformer.transformer.layers.")
+                                
+                            # Handle self-attention differences
+                            if ".self_attn.k_proj.weight" in new_key:
+                                # We need to potentially combine q,k,v into in_proj_weight
+                                continue
+                            if ".self_attn.q_proj.weight" in new_key or ".self_attn.v_proj.weight" in new_key:
+                                continue
+                            if ".self_attn.o_proj.weight" in new_key:
+                                new_key = new_key.replace(".self_attn.o_proj.weight", ".self_attn.out_proj.weight")
+                                
+                            # Add the remapped key-value pair
+                            new_state_dict[new_key] = value
+                            
+                        # Get the mimi model and load the remapped state dict
+                        mimi = loaders.create_empty_mimi(device=device)
+                        mimi.load_state_dict(new_state_dict, strict=False)
+                        print("Successfully loaded local mimi model with key remapping")
                     
                     # Restore offline mode
                     if original_hf_offline:
@@ -94,8 +143,57 @@ try:
                         os.environ['HF_DATASETS_OFFLINE'] = '0'
                         
                         from moshi.models import loaders
-                        mimi = loaders.get_mimi(csm_mimi_path, device=device)
-                        print("Successfully loaded mimi from CSM-1B folder")
+                        try:
+                            # First try direct loading
+                            mimi = loaders.get_mimi(csm_mimi_path, device=device)
+                            print("Successfully loaded mimi from CSM-1B folder")
+                        except Exception as e:
+                            print(f"Standard loading failed for CSM-1B mimi: {str(e)}")
+                            print("Attempting to load with key remapping...")
+                            
+                            # Custom loading with key remapping
+                            import torch
+                            
+                            # Load the state dict
+                            state_dict = torch.load(csm_mimi_path, map_location=device)
+                            if isinstance(state_dict, dict) and 'model' in state_dict:
+                                state_dict = state_dict['model']
+                                
+                            # Create a new state dict with remapped keys
+                            new_state_dict = {}
+                            for key, value in state_dict.items():
+                                # Remap keys from "layers" to "model"
+                                new_key = key.replace("decoder.layers.", "decoder.model.")
+                                new_key = new_key.replace("encoder.layers.", "encoder.model.")
+                                
+                                # For conv weights, add the extra ".conv" as needed
+                                if ".conv.bias" in new_key:
+                                    new_key = new_key.replace(".conv.bias", ".conv.conv.bias")
+                                if ".conv.weight" in new_key:
+                                    new_key = new_key.replace(".conv.weight", ".conv.conv.weight")
+                                    
+                                # Handle other structural differences
+                                if "encoder_transformer.layers." in new_key:
+                                    new_key = new_key.replace("encoder_transformer.layers.", "encoder_transformer.transformer.layers.")
+                                if "decoder_transformer.layers." in new_key:
+                                    new_key = new_key.replace("decoder_transformer.layers.", "decoder_transformer.transformer.layers.")
+                                    
+                                # Handle self-attention differences
+                                if ".self_attn.k_proj.weight" in new_key:
+                                    # We need to potentially combine q,k,v into in_proj_weight
+                                    continue
+                                if ".self_attn.q_proj.weight" in new_key or ".self_attn.v_proj.weight" in new_key:
+                                    continue
+                                if ".self_attn.o_proj.weight" in new_key:
+                                    new_key = new_key.replace(".self_attn.o_proj.weight", ".self_attn.out_proj.weight")
+                                    
+                                # Add the remapped key-value pair
+                                new_state_dict[new_key] = value
+                                
+                            # Get the mimi model and load the remapped state dict
+                            mimi = loaders.create_empty_mimi(device=device)
+                            mimi.load_state_dict(new_state_dict, strict=False)
+                            print("Successfully loaded mimi from CSM-1B folder with key remapping")
                         
                         # Restore offline mode
                         if original_hf_offline:
