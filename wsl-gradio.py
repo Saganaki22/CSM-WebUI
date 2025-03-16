@@ -142,12 +142,24 @@ try:
                         except Exception as e:
                             print(f"Error loading mimi preprocessor config: {str(e)}")
                     
-                    # Import MimiModel directly
-                    from moshi.models.seanet import MimiModel
-                    from safetensors.torch import load_file
+                    # Import moshi models properly
+                    # Fix: Use try/except to handle the import error
+                    try:
+                        from moshi.models.seanet import MimiModel
+                        print("Successfully imported MimiModel directly")
+                        
+                        # Create model with config
+                        mimi_model = MimiModel(**config).to(device)
+                    except ImportError:
+                        # If direct import fails, use loaders instead
+                        print("Could not import MimiModel directly - will use loaders instead")
+                        from moshi.models import loaders
+                        
+                        # Create model using loaders
+                        print("Creating mimi model using loaders.get_mimi()")
+                        mimi_model = loaders.get_mimi(local_mimi_path, device=device)
                     
-                    # Create model with config
-                    mimi_model = MimiModel(**config).to(device)
+                    from safetensors.torch import load_file
                     
                     # Load weights from safetensors file
                     print(f"Loading mimi weights from safetensors file...")
@@ -279,7 +291,11 @@ import torchaudio
 from huggingface_hub import hf_hub_download
 from models import Model, ModelArgs
 from moshi.models import loaders
-from moshi.models.seanet import MimiModel
+# Fix import for MimiModel
+try:
+    from moshi.models.seanet import MimiModel
+except ImportError:
+    print("Could not import MimiModel directly, will use loaders instead")
 from tokenizers.processors import TemplateProcessing
 from transformers import AutoTokenizer
 from watermarking import CSM_1B_GH_WATERMARK, load_watermarker, watermark
@@ -393,27 +409,8 @@ def load_local_mimi(device, local_path=None):
             print(f"Error loading mimi preprocessor config: {str(e)}")
     
     try:
-        # Create a MimiModel instance with the config
-        mimi_model = MimiModel(**config).to(device)
-        
-        # Load weights from safetensors file
-        print(f"Loading mimi weights from safetensors file...")
-        state_dict = load_file(model_path, device=device)
-        
-        # Print first few keys for debugging
-        key_list = list(state_dict.keys())
-        print(f"Loaded {len(key_list)} keys from safetensors file.")
-        if key_list:
-            print(f"First few keys: {key_list[:5]}")
-        
-        # Load weights with non-strict setting to handle potential key mismatches
-        missing_keys, unexpected_keys = mimi_model.load_state_dict(state_dict, strict=False)
-        
-        # Print any missing or unexpected keys (limited to first 10)
-        if missing_keys:
-            print(f"Missing {len(missing_keys)} keys, first 10: {missing_keys[:10]}")
-        if unexpected_keys:
-            print(f"Unexpected {len(unexpected_keys)} keys, first 10: {unexpected_keys[:10]}")
+        # Use loaders.get_mimi instead of direct MimiModel instantiation
+        mimi_model = loaders.get_mimi(model_path, device=device)
         
         # Set default sample rate if not in config
         if not hasattr(mimi_model, 'sample_rate'):
