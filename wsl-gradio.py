@@ -10,20 +10,45 @@ import numpy as np
 import requests
 import shutil
 
+# Set environment variables to prevent auto-downloading
+os.environ['HF_DATASETS_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+
 # Add the current directory to the path to import the generator module
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
+def debug_path_check(file_path):
+    """Debug helper to check if a file exists at the given path."""
+    abs_path = os.path.abspath(file_path)
+    exists = os.path.exists(file_path)
+    dir_exists = os.path.exists(os.path.dirname(file_path))
+    
+    print(f"Debug path check for: {file_path}")
+    print(f"  Absolute path: {abs_path}")
+    print(f"  File exists: {exists}")
+    print(f"  Directory exists: {dir_exists}")
+    if exists:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        print(f"  File size: {size_mb:.2f} MB")
+    return exists
+
 # Import the CSM model functions
 try:
-    from generator import load_csm_1b, Segment
+    print("Attempting to import generator module...")
+    from generator import load_csm_1b, Segment, debug_path_check
 except ImportError:
     # If the generator module is not in the current directory, try to find it in the csm repository
     print("Could not import generator module directly. Make sure you've cloned the CSM repository.")
     print("Attempting to import from csm directory...")
     sys.path.append(os.path.join(current_dir, "csm"))
-    from generator import load_csm_1b, Segment
+    try:
+        from generator import load_csm_1b, Segment, debug_path_check
+    except ImportError:
+        print("Failed to import from csm directory as well.")
+        print("Please ensure the generator.py file is in the current directory or in a 'csm' subdirectory.")
+        sys.exit(1)
 
 # Global variable to store the generator
 generator = None
@@ -42,13 +67,45 @@ def load_model(model_path):
     """Load the CSM model from the given path."""
     global generator
     try:
+        print("\n===== LOADING MODEL =====")
+        print(f"Current working directory: {os.getcwd()}")
+        debug_path_check(model_path)
+        
+        # Also check for config.json in the same directory
+        config_path = os.path.join(os.path.dirname(model_path), "config.json")
+        debug_path_check(config_path)
+        
+        # Check for mimi.bin in the same directory
+        mimi_path = os.path.join(os.path.dirname(model_path), "mimi.bin")
+        debug_path_check(mimi_path)
+        
         if not os.path.exists(model_path):
             return f"Error: Model file not found at {model_path}"
         
+        # Ensure the model directory is in sys.path to help with imports
+        model_dir = os.path.dirname(model_path)
+        if model_dir not in sys.path:
+            sys.path.append(model_dir)
+            print(f"Added {model_dir} to sys.path")
+        
+        # If config.json doesn't exist, create a simple one
+        if not os.path.exists(config_path):
+            print(f"Creating minimal config.json at {config_path}")
+            try:
+                with open(config_path, 'w') as f:
+                    f.write('{"model_type": "csm-1b"}')
+                print("Created config.json successfully")
+            except Exception as e:
+                print(f"Warning: Could not create config.json: {e}")
+        
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Loading model on device: {device}")
         generator = load_csm_1b(model_path, device)
+        
         return f"Model loaded successfully on {device}."
     except Exception as e:
+        print(f"Error stack trace:")
+        print(traceback.format_exc())
         return f"Error loading model: {str(e)}"
 
 def download_model(output_path):
@@ -69,6 +126,12 @@ def download_model(output_path):
             with open(output_path, 'wb') as f:
                 response.raw.decode_content = True
                 shutil.copyfileobj(response.raw, f)
+            
+            # Create an empty config.json file in the same directory
+            config_path = os.path.join(os.path.dirname(output_path), "config.json")
+            with open(config_path, 'w') as f:
+                f.write('{"model_type": "csm-1b"}')
+            
             return f"Model downloaded successfully to {output_path}."
         else:
             # Check for 401 Unauthorized error which may indicate lack of access
@@ -388,7 +451,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
     gr.HTML("""
     <div style="text-align: center; margin: 20px 0;">
         <a href="https://github.com/Saganaki22/CSM-WebUI" style="text-decoration: none; color: inherit;">
-            <h1 style="font-size: 2.3rem; font-weight: bold; margin: 0;">CSM-WebUI</h1>
+            <h1 style="font-size: 2.3rem; font-weight: bold; margin: 0;">CSM-WebUI (WSL)</h1>
         </a>
     </div>
     """)
@@ -396,7 +459,9 @@ with gr.Blocks(title="CSM-WebUI") as app:
     gr.Markdown("""
     CSM (Conversational Speech Model) is a speech generation model from Sesame that generates RVQ audio codes from text and audio inputs.
     
-    This interface allows you to generate speech from text, with optional conversation context.
+    This interface allows you to generate speech from text, with optional conversation context. 
+    
+    This is the WSL-compatible version.
     """, elem_classes=["center-aligned"])
     
     # Add CSS for center alignment
@@ -416,7 +481,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
         model_path = gr.Textbox(
             label="Model Path",
             placeholder="Path to the CSM model file model.safetensors",
-            value="models/model.safetensors"
+            value="models/csm-1b/model.safetensors"
         )
         with gr.Column():
             load_button = gr.Button("Load Model")
@@ -424,7 +489,9 @@ with gr.Blocks(title="CSM-WebUI") as app:
         model_status = gr.Textbox(label="Model Status", interactive=False)
     
     gr.Markdown("""
-    **Note:** Make sure you DL the model from [Hugging Face](https://huggingface.co/sesame/csm-1b) first.
+    **Note:** Make sure you have the models from HF [csm-1b](https://huggingface.co/drbaph/CSM-1B/tree/main) [Llama-3.2-1b](https://huggingface.co/unsloth/Llama-3.2-1B/tree/main) in the correct directories.
+    
+    **WSL Note:** This version is optimized for use in Windows Subsystem for Linux.
     """)
     
     load_button.click(load_model, inputs=[model_path], outputs=[model_status])
@@ -684,6 +751,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
     - **Audio Upload**: You can upload your own audio files (.wav, .mp3, .ogg, etc.) or record directly with your microphone.
     - **Voice Cloning**: For best results, upload audio samples that match the voice you want to replicate and use the same Speaker ID.
     - As mentioned in the CSM documentation, this model should not be used for: Impersonation or Fraud, Misinformation or Deception, Illegal or Harmful Activities.
+    - **WSL Note**: This version is optimized for Linux environments, specifically Windows Subsystem for Linux.
     """, elem_classes=["left-aligned"])
     
     # Add official links section without bullet points
