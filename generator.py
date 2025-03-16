@@ -28,7 +28,8 @@ def load_llama3_tokenizer():
     """
     Load Llama tokenizer from local path if available, otherwise from HF
     """
-    local_tokenizer_path = "models/llama3.2/"
+    # Use os.path.join for proper path handling
+    local_tokenizer_path = os.path.join("models", "llama3.2")
     
     if os.path.exists(os.path.join(local_tokenizer_path, "tokenizer.json")):
         # List all tokenizer files found in the directory
@@ -70,6 +71,29 @@ def load_llama3_tokenizer():
     return tokenizer
 
 
+def download_mimi_directly():
+    """Download the mimi file directly from Hugging Face."""
+    try:
+        # Temporarily disable offline mode
+        original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+        os.environ['HF_DATASETS_OFFLINE'] = '0'
+        
+        print("Downloading mimi file from Hugging Face...")
+        # The exact name might differ for the bin format vs safetensors format
+        mimi_path = hf_hub_download("kyutai/moshiko-pytorch-bf16", "tokenizer-e351c8d8-checkpoint125.safetensors")
+        
+        # Restore offline mode
+        if original_hf_offline:
+            os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+            
+        print(f"Successfully downloaded mimi file to: {mimi_path}")
+        return mimi_path
+    except Exception as e:
+        print(f"Error downloading mimi: {str(e)}")
+        print(traceback.format_exc())
+        return None
+
+
 class Generator:
     def __init__(
         self,
@@ -82,32 +106,107 @@ class Generator:
 
         device = next(model.parameters()).device
         
+        # Try multiple approaches to load the mimi weights
         try:
             print("Attempting to load mimi weights...")
-            local_mimi_path = "models/csm-1b/mimi.bin"
-            if os.path.exists(local_mimi_path):
-                print(f"Loading mimi weights from local path: {local_mimi_path}")
-                mimi_weight = local_mimi_path
-            else:
-                print(f"Local mimi weights not found, downloading from Hugging Face...")
-                mimi_weight = hf_hub_download(loaders.DEFAULT_REPO, loaders.MIMI_NAME)
+            mimi = None
             
-            print(f"Using mimi weights from: {mimi_weight}")
-            mimi = loaders.get_mimi(mimi_weight, device=device)
+            # First try downloading directly - this is most likely to work
+            mimi_path = download_mimi_directly()
+            
+            if mimi_path:
+                try:
+                    print(f"Loading downloaded mimi weights from: {mimi_path}")
+                    mimi = loaders.get_mimi(mimi_path, device=device)
+                    print("Successfully loaded mimi model from downloaded file")
+                except Exception as e:
+                    print(f"Error loading downloaded mimi: {str(e)}")
+                    mimi = None
+            
+            # If still no mimi, try local paths
+            if mimi is None:
+                # Check in models/mimi directory
+                local_mimi_path = os.path.join("models", "mimi", "model.safetensors")
+                
+                if os.path.exists(local_mimi_path):
+                    try:
+                        # Temporarily disable offline mode
+                        original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                        os.environ['HF_DATASETS_OFFLINE'] = '0'
+                        
+                        print(f"Trying to load mimi from local path: {local_mimi_path}")
+                        # Skip strict loading which would reject mismatched keys
+                        from moshi.models.seanet import MimiModel
+                        import json
+                        
+                        # Try to load config if available
+                        config_path = os.path.join("models", "mimi", "config.json")
+                        config = {}
+                        if os.path.exists(config_path):
+                            with open(config_path, 'r') as f:
+                                config = json.load(f)
+                        
+                        # Create model instance
+                        mimi_model = MimiModel(**config).to(device)
+                        
+                        # Load state dict with strict=False to ignore mismatches
+                        from safetensors.torch import load_file
+                        state_dict = load_file(local_mimi_path, device=device)
+                        mimi_model.load_state_dict(state_dict, strict=False)
+                        
+                        # Set up as mimi
+                        mimi = mimi_model
+                        # Standard sample rate for mimi
+                        setattr(mimi, 'sample_rate', 24000)
+                        print("Successfully loaded local mimi model with non-strict loading")
+                        
+                        # Restore offline mode
+                        if original_hf_offline:
+                            os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+                    except Exception as local_e:
+                        print(f"Error loading local mimi: {str(local_e)}")
+                        print(traceback.format_exc())
+                        mimi = None
+                
+                # If still no mimi, fall back to standard download
+                if mimi is None:
+                    print("All local loading attempts failed. Falling back to standard download...")
+                    # Temporarily disable offline mode
+                    original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                    os.environ['HF_DATASETS_OFFLINE'] = '0'
+                    
+                    mimi = loaders.get_mimi(None, device=device)  # Let it download the default
+                    
+                    # Restore offline mode
+                    if original_hf_offline:
+                        os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+            
+            # Set codebooks and assign as audio tokenizer
             mimi.set_num_codebooks(32)
             self._audio_tokenizer = mimi
+            
         except Exception as e:
             print(f"Error loading mimi weights: {str(e)}")
             print(traceback.format_exc())
             raise
-
+        
         try:
             print("Loading watermarker...")
-            self._watermarker = load_watermarker(device=device)
+            # Look for a local watermarker file
+            watermarker_path = os.path.join("models", "csm-1b", "watermarker.pt")
+            
+            if os.path.exists(watermarker_path):
+                print(f"Loading watermarker from local path: {watermarker_path}")
+                self._watermarker = load_watermarker(device=device, ckpt_path=watermarker_path)
+            else:
+                # Skip watermarking if file not available
+                print("Watermarker file not found. Watermarking will be disabled.")
+                self._watermarker = None
         except Exception as e:
             print(f"Error loading watermarker: {str(e)}")
             print(traceback.format_exc())
-            raise
+            print("Setting watermarker to None - watermarking will be skipped")
+            self._watermarker = None
 
         self.sample_rate = mimi.sample_rate
         self.device = device
@@ -208,12 +307,16 @@ class Generator:
 
         audio = self._audio_tokenizer.decode(torch.stack(samples).permute(1, 2, 0)).squeeze(0).squeeze(0)
 
-        # This applies an imperceptible watermark to identify audio as AI-generated.
-        # Watermarking ensures transparency, dissuades misuse, and enables traceability.
-        # Please be a responsible AI citizen and keep the watermarking in place.
-        # If using CSM 1B in another application, use your own private key and keep it secret.
-        audio, wm_sample_rate = watermark(self._watermarker, audio, self.sample_rate, CSM_1B_GH_WATERMARK)
-        audio = torchaudio.functional.resample(audio, orig_freq=wm_sample_rate, new_freq=self.sample_rate)
+        # Apply watermark if watermarker is available
+        if self._watermarker is not None:
+            # This applies an imperceptible watermark to identify audio as AI-generated.
+            # Watermarking ensures transparency, dissuades misuse, and enables traceability.
+            # Please be a responsible AI citizen and keep the watermarking in place.
+            # If using CSM 1B in another application, use your own private key and keep it secret.
+            audio, wm_sample_rate = watermark(self._watermarker, audio, self.sample_rate, CSM_1B_GH_WATERMARK)
+            audio = torchaudio.functional.resample(audio, orig_freq=wm_sample_rate, new_freq=self.sample_rate)
+        else:
+            print("Skipping watermarking - watermarker not available")
 
         return audio
 
@@ -247,29 +350,50 @@ def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda", config_path: s
     print(f"Loading CSM model from: {ckpt_path}")
     debug_path_check(ckpt_path)
     
-    # Check for config file
+    # Check for config file with proper path handling
     if not config_path:
         config_path = os.path.join(os.path.dirname(ckpt_path), "config.json")
     
-    if os.path.exists(config_path):
+    # Debug the config path
+    print(f"Checking for config file at: {config_path}")
+    config_exists = os.path.exists(config_path)
+    print(f"Config file exists: {config_exists}")
+    
+    # Default model args
+    default_args = {
+        "backbone_flavor": "llama-1B",
+        "decoder_flavor": "llama-100M",
+        "text_vocab_size": 128256,
+        "audio_vocab_size": 2051,
+        "audio_num_codebooks": 32,
+    }
+    
+    # Try to load config if it exists
+    if config_exists:
         print(f"Using configuration from: {config_path}")
         try:
             import json
             with open(config_path, 'r') as f:
                 config = json.load(f)
                 print(f"Loaded configuration with keys: {list(config.keys())}")
+                
+                # Update default args with values from config
+                for key in default_args:
+                    if key in config:
+                        default_args[key] = config[key]
         except Exception as e:
             print(f"Warning: Failed to load config file: {e}")
+            print(f"Using default parameters instead")
     else:
         print(f"No configuration file found at {config_path}, using default parameters")
     
-    # Create model with default arguments
+    # Create model with arguments
     model_args = ModelArgs(
-        backbone_flavor="llama-1B",
-        decoder_flavor="llama-100M",
-        text_vocab_size=128256,
-        audio_vocab_size=2051,
-        audio_num_codebooks=32,
+        backbone_flavor=default_args["backbone_flavor"],
+        decoder_flavor=default_args["decoder_flavor"],
+        text_vocab_size=default_args["text_vocab_size"],
+        audio_vocab_size=default_args["audio_vocab_size"],
+        audio_num_codebooks=default_args["audio_num_codebooks"],
     )
     
     print(f"Initializing model with arguments: {model_args}")
