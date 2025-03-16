@@ -65,10 +65,10 @@ Our setup ensures compatible versions of key packages:
 
 The project uses the CSM-1B .safeteonsors model:
 - **CSM-1B**: Available at [drbaph/CSM-1B](https://huggingface.co/drbaph/CSM-1B/tree/main)
+  place in models/csm-1b/*
 
-Models are stored in specific directories:
-- Windows: `models/model.safetensors`
-- WSL: Same structure, but will default to the original model paths if not found locally
+- **Llama-3.2-1b**: download from [drbaph/models](https://huggingface.co/drbaph/models/tree/main/llama3.2)
+  place in models/llama3.2/*
 
 ### HuggingFace Authentication Requirements
 
@@ -80,6 +80,8 @@ Models are stored in specific directories:
 4. During the installation process, you will be prompted to authenticate with your HuggingFace token - paste the token when prompted
 
 Without access to the Llama model and proper authentication, the program will not work as it uses the Llama backbone.
+
+**UPDATE** Since models were gated i re-uploaded them to my repo non-gated for ease of access [HF](https://huggingface.co/drbaph/models/tree/main)
 
 ## ⚙️ Installation
 
