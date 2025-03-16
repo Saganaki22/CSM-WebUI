@@ -63,6 +63,26 @@ VOICE_TO_SPEAKER = {
     "read_speech_d": 5
 }
 
+# A mapping from voice name to default audio file
+VOICE_TO_AUDIO = {
+    "conversational_a": "sounds/woman.mp3",
+    "conversational_b": "sounds/man.mp3",
+    "read_speech_a": "sounds/read_speech_a.wav",
+    "read_speech_b": "sounds/read_speech_b.wav",
+    "read_speech_c": "sounds/read_speech_c.wav",
+    "read_speech_d": "sounds/read_speech_d.wav"
+}
+
+# A mapping from voice name to default text prompt
+VOICE_TO_PROMPT = {
+    "conversational_a": "like revising for an exam I'd have to try and like keep up the momentum because I'd start really early I'd be like okay I'm gonna start revising now and then like you're revising for ages and then I just like start losing steam I didn't do that for the exam we had recently to be fair that was a more of a last minute scenario but like yeah I'm trying to like yeah I noticed this yesterday that like Mondays I sort of started my day I sort of just like get a bit when I start",
+    "conversational_b": "like a super Mario level. Like it's very like high detail. And like, once you get into the park, it just like, everything looks like a computer game and they have all these, like, you know, it. If there's like a you know, like is a Mario game, they will have like a question block. And if you hit you know, and it's just like, it's just like for like the everyone, when they come into the park, they get like this little bracelet and then you can go punching question blocks around.",
+    "read_speech_a": "And Lake turned round upon me, a little abruptly, his odd yellowish eyes, a little like those of the sea eagle, and the ghost of his smile that flickered on his singularly pale face, with a stern and insidious look, confronted me.",
+    "read_speech_b": "He was such a big boy that he wore high boots and carried a jack knife. He gazed and gazed at the cap, and could not keep from fingering the blue tassel.",
+    "read_speech_c": "All passed so quickly, there was so much going on around him, the Tree quite forgot to look to himself.",
+    "read_speech_d": "Suddenly I was back in the old days Before you felt we ought to drift apart. It was some trick-the way your eyebrows raise."
+}
+
 def load_model(model_path):
     """Load the CSM model from the given path."""
     global generator
@@ -87,16 +107,6 @@ def load_model(model_path):
         if model_dir not in sys.path:
             sys.path.append(model_dir)
             print(f"Added {model_dir} to sys.path")
-        
-        # If config.json doesn't exist, create a simple one
-        if not os.path.exists(config_path):
-            print(f"Creating minimal config.json at {config_path}")
-            try:
-                with open(config_path, 'w') as f:
-                    f.write('{"model_type": "csm-1b"}')
-                print("Created config.json successfully")
-            except Exception as e:
-                print(f"Warning: Could not create config.json: {e}")
         
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Loading model on device: {device}")
@@ -445,8 +455,19 @@ def generate_conversation(speaker_a_text, speaker_a_voice, speaker_a_audio, spea
         print(traceback.format_exc())
         return None, f"Error generating conversation: {str(e)}"
 
+# Function to update audio file and prompt based on selected voice
+def update_speaker_audio_and_prompt(voice):
+    """Return the path to the audio file corresponding to the selected voice."""
+    global VOICE_TO_AUDIO
+    return VOICE_TO_AUDIO.get(voice, None)
+
+def update_speaker_prompt(voice):
+    """Return the text prompt corresponding to the selected voice."""
+    global VOICE_TO_PROMPT
+    return VOICE_TO_PROMPT.get(voice, "")
+
 # Define the Gradio interface
-with gr.Blocks(title="CSM-WebUI") as app:
+with gr.Blocks(title="CSM-WebUI (WSL)") as app:
     # Use HTML directly for the title to ensure proper rendering and linking, with adjusted font size
     gr.HTML("""
     <div style="text-align: center; margin: 20px 0;">
@@ -461,7 +482,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
     
     This interface allows you to generate speech from text, with optional conversation context. 
     
-    This is the WSL-compatible version.
+    This is the WSL (Windows Subsystem for Linux) version.
     """, elem_classes=["center-aligned"])
     
     # Add CSS for center alignment
@@ -491,7 +512,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
     gr.Markdown("""
     **Note:** Make sure you have the models from HF [csm-1b](https://huggingface.co/drbaph/CSM-1B/tree/main) [Llama-3.2-1b](https://huggingface.co/unsloth/Llama-3.2-1B/tree/main) in the correct directories.
     
-    **WSL Note:** This version is optimized for use in Windows Subsystem for Linux.
+    **WSL Note:** This version is designed to run in Linux environment.
     """)
     
     load_button.click(load_model, inputs=[model_path], outputs=[model_status])
@@ -642,7 +663,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
                     speaker_a_prompt = gr.Textbox(
                         label="Speaker prompt",
                         placeholder="Enter text for the voice prompt",
-                        value="like revising for an exam I'd have to try and like keep up the momentum because I'd start really early I'd be like okay I'm gonna start revising now and then like you're revising for ages and then I just like start losing steam I didn't do that for the exam we had recently to be fair that was a more of a last minute scenario but like yeah I'm trying to like yeah I noticed this yesterday that like Mondays I sort of started my day I sort of just like get a bit when I start",
+                        value=VOICE_TO_PROMPT["conversational_a"],
                         lines=5
                     )
                 
@@ -665,7 +686,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
                     speaker_b_prompt = gr.Textbox(
                         label="Speaker prompt",
                         placeholder="Enter text for the voice prompt",
-                        value="like a super Mario level. Like it's very like high detail. And like, once you get into the park, it just like, everything looks like a computer game and they have all these, like, you know, it. If there's like a you know, like is a Mario game, they will have like a question block. And if you hit you know, and it's just like, it's just like for like the everyone, when they come into the park, they get like this little bracelet and then you can go punching question blocks around.",
+                        value=VOICE_TO_PROMPT["conversational_b"],
                         lines=5
                     )
                 
@@ -722,6 +743,31 @@ with gr.Blocks(title="CSM-WebUI") as app:
         outputs=[synthesized_audio, conversation_status]
     )
     
+    # Connect the voice dropdown to the audio file and prompt selection
+    speaker_a_voice.change(
+        update_speaker_audio_and_prompt,
+        inputs=[speaker_a_voice],
+        outputs=[speaker_a_audio]
+    )
+    
+    speaker_a_voice.change(
+        update_speaker_prompt,
+        inputs=[speaker_a_voice],
+        outputs=[speaker_a_prompt]
+    )
+    
+    speaker_b_voice.change(
+        update_speaker_audio_and_prompt,
+        inputs=[speaker_b_voice],
+        outputs=[speaker_b_audio]
+    )
+    
+    speaker_b_voice.change(
+        update_speaker_prompt,
+        inputs=[speaker_b_voice],
+        outputs=[speaker_b_prompt]
+    )
+    
     # Add additional CSS for alignment
     gr.HTML("""
     <style>
@@ -751,7 +797,7 @@ with gr.Blocks(title="CSM-WebUI") as app:
     - **Audio Upload**: You can upload your own audio files (.wav, .mp3, .ogg, etc.) or record directly with your microphone.
     - **Voice Cloning**: For best results, upload audio samples that match the voice you want to replicate and use the same Speaker ID.
     - As mentioned in the CSM documentation, this model should not be used for: Impersonation or Fraud, Misinformation or Deception, Illegal or Harmful Activities.
-    - **WSL Note**: This version is optimized for Linux environments, specifically Windows Subsystem for Linux.
+    - **WSL Note**: This version is designed to run in Linux environment.
     """, elem_classes=["left-aligned"])
     
     # Add official links section without bullet points
