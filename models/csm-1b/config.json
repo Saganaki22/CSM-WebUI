@@ -1,0 +1,7 @@
+{
+  "audio_num_codebooks": 32,
+  "audio_vocab_size": 2051,
+  "backbone_flavor": "llama-1B",
+  "decoder_flavor": "llama-100M",
+  "text_vocab_size": 128256
+}
