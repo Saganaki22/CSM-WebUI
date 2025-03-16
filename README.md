@@ -91,7 +91,8 @@ The project uses the CSM-1B .safeteonsors model:
 
 ```batch
 # Clone the repository
-git clone https://github.com/Saganaki22/CSM-WebUI.git
+git clone git clone --branch Use-Local-Models https://github.com/Saganaki22/CSM-WebUI.git
+
 cd CSM-WebUI
 
 # Step 1: Run the improved Windows setup script
@@ -122,12 +123,15 @@ run_fixed.bat
 3. **Use run_fixed.bat to launch the application**
    - This script is automatically created by fix-torch-compile.bat
    - Properly activates the virtual environment and launches the application
+  
+4. **Use hf_login.bat if you get any authentication errors** 
 
 ### WSL/Linux Installation
 
 ```bash
 # Clone the repository
-git clone https://github.com/Saganaki22/CSM-WebUI.git
+git clone git clone --branch Use-Local-Models https://github.com/Saganaki22/CSM-WebUI.git
+
 cd CSM-WebUI
 
 # Run the WSL setup script
