@@ -10,7 +10,11 @@ from moshi.models import loaders
 from tokenizers.processors import TemplateProcessing
 from transformers import AutoTokenizer
 from watermarking import CSM_1B_GH_WATERMARK, load_watermarker, watermark
+import traceback
 
+# Set environment variables to prevent auto-downloading
+os.environ['HF_DATASETS_OFFLINE'] = '1'
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
 
 @dataclass
 class Segment:
@@ -22,10 +26,39 @@ class Segment:
 
 def load_llama3_tokenizer():
     """
-    https://github.com/huggingface/transformers/issues/22794#issuecomment-2092623992
+    Load Llama tokenizer from local path if available, otherwise from HF
     """
-    tokenizer_name = "meta-llama/Llama-3.2-1B"
-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    local_tokenizer_path = "models/llama3.2/"
+    
+    if os.path.exists(os.path.join(local_tokenizer_path, "tokenizer.json")):
+        # List all tokenizer files found in the directory
+        tokenizer_files = [f for f in os.listdir(local_tokenizer_path) 
+                          if f.startswith("tokenizer") or f == "special_tokens_map.json"]
+        
+        print(f"Found local Llama tokenizer files in {local_tokenizer_path}:")
+        for file in tokenizer_files:
+            file_size = os.path.getsize(os.path.join(local_tokenizer_path, file)) / 1024  # KB
+            print(f"  - {file} ({file_size:.2f} KB)")
+            
+        print("Loading local tokenizer...")
+        tokenizer = AutoTokenizer.from_pretrained(local_tokenizer_path)
+        
+        # Verify tokenizer was loaded correctly by showing vocab size
+        print(f"Successfully loaded local tokenizer!")
+        print(f"Tokenizer vocab size: {tokenizer.vocab_size}")
+        print(f"Tokenizer model: {tokenizer.name_or_path}")
+        
+        # Optional: Show a test tokenization
+        test_text = "Hello, this is a test of the local tokenizer."
+        tokens = tokenizer.encode(test_text)
+        print(f"Test tokenization of '{test_text}':")
+        print(f"Token IDs: {tokens[:10]}... (showing first 10 tokens)")
+    else:
+        print(f"Local tokenizer not found at {local_tokenizer_path}. Downloading from Hugging Face.")
+        tokenizer_name = "meta-llama/Llama-3.2-1B"
+        tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+        print(f"Downloaded tokenizer from {tokenizer_name}")
+    
     bos = tokenizer.bos_token
     eos = tokenizer.eos_token
     tokenizer._tokenizer.post_processor = TemplateProcessing(
@@ -48,12 +81,33 @@ class Generator:
         self._text_tokenizer = load_llama3_tokenizer()
 
         device = next(model.parameters()).device
-        mimi_weight = hf_hub_download(loaders.DEFAULT_REPO, loaders.MIMI_NAME)
-        mimi = loaders.get_mimi(mimi_weight, device=device)
-        mimi.set_num_codebooks(32)
-        self._audio_tokenizer = mimi
+        
+        try:
+            print("Attempting to load mimi weights...")
+            local_mimi_path = "models/csm-1b/mimi.bin"
+            if os.path.exists(local_mimi_path):
+                print(f"Loading mimi weights from local path: {local_mimi_path}")
+                mimi_weight = local_mimi_path
+            else:
+                print(f"Local mimi weights not found, downloading from Hugging Face...")
+                mimi_weight = hf_hub_download(loaders.DEFAULT_REPO, loaders.MIMI_NAME)
+            
+            print(f"Using mimi weights from: {mimi_weight}")
+            mimi = loaders.get_mimi(mimi_weight, device=device)
+            mimi.set_num_codebooks(32)
+            self._audio_tokenizer = mimi
+        except Exception as e:
+            print(f"Error loading mimi weights: {str(e)}")
+            print(traceback.format_exc())
+            raise
 
-        self._watermarker = load_watermarker(device=device)
+        try:
+            print("Loading watermarker...")
+            self._watermarker = load_watermarker(device=device)
+        except Exception as e:
+            print(f"Error loading watermarker: {str(e)}")
+            print(traceback.format_exc())
+            raise
 
         self.sample_rate = mimi.sample_rate
         self.device = device
@@ -164,7 +218,52 @@ class Generator:
         return audio
 
 
-def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda") -> Generator:
+def debug_path_check(file_path):
+    """Debug helper to check if a file exists at the given path."""
+    abs_path = os.path.abspath(file_path)
+    exists = os.path.exists(file_path)
+    dir_exists = os.path.exists(os.path.dirname(file_path))
+    
+    print(f"Debug path check for: {file_path}")
+    print(f"  Absolute path: {abs_path}")
+    print(f"  File exists: {exists}")
+    print(f"  Directory exists: {dir_exists}")
+    if exists:
+        size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        print(f"  File size: {size_mb:.2f} MB")
+    return exists
+
+
+def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda", config_path: str = None) -> Generator:
+    """
+    Load the CSM model from the given path.
+    
+    Args:
+        ckpt_path: Path to the model weights file
+        device: Device to load the model on ('cuda' or 'cpu')
+        config_path: Optional path to a config.json file
+    """
+    print(f"\n===== LOADING CSM MODEL =====")
+    print(f"Loading CSM model from: {ckpt_path}")
+    debug_path_check(ckpt_path)
+    
+    # Check for config file
+    if not config_path:
+        config_path = os.path.join(os.path.dirname(ckpt_path), "config.json")
+    
+    if os.path.exists(config_path):
+        print(f"Using configuration from: {config_path}")
+        try:
+            import json
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+                print(f"Loaded configuration with keys: {list(config.keys())}")
+        except Exception as e:
+            print(f"Warning: Failed to load config file: {e}")
+    else:
+        print(f"No configuration file found at {config_path}, using default parameters")
+    
+    # Create model with default arguments
     model_args = ModelArgs(
         backbone_flavor="llama-1B",
         decoder_flavor="llama-100M",
@@ -172,19 +271,30 @@ def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda") -> Generator:
         audio_vocab_size=2051,
         audio_num_codebooks=32,
     )
+    
+    print(f"Initializing model with arguments: {model_args}")
     model = Model(model_args).to(device=device, dtype=torch.bfloat16)
     
-    # Modified code to handle safetensors files
+    # Load the model weights
+    print(f"Loading model weights...")
     if ckpt_path.endswith('.safetensors'):
         try:
             from safetensors.torch import load_file
+            print(f"Using safetensors to load {ckpt_path}")
             state_dict = load_file(ckpt_path, device=device)
+            print(f"Successfully loaded state dict with {len(state_dict)} keys")
         except ImportError:
             raise ImportError("safetensors is required to load .safetensors files. Please install it with 'pip install safetensors'")
     else:
+        print(f"Using torch.load to load {ckpt_path}")
         state_dict = torch.load(ckpt_path)
     
+    print(f"Loading state dict into model...")
     model.load_state_dict(state_dict)
-
+    print(f"Model loaded successfully")
+    
+    # Create the generator
+    print(f"Creating generator...")
     generator = Generator(model)
+    print(f"Generator created successfully")
     return generator
