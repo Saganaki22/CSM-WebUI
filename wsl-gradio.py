@@ -9,6 +9,7 @@ import traceback
 import numpy as np
 import requests
 import shutil
+import json
 
 # Set environment variables to prevent auto-downloading
 os.environ['HF_DATASETS_OFFLINE'] = '1'
@@ -38,6 +39,126 @@ def debug_path_check(file_path):
 try:
     print("Attempting to import generator module...")
     from generator import load_csm_1b, Segment, debug_path_check
+    # Patch the Generator.__init__ method to prioritize local mimi files
+    from generator import Generator
+    
+    # Save the original __init__ method
+    original_init = Generator.__init__
+    
+    # Define a new __init__ method that prioritizes local mimi files
+    def new_init(self, model):
+        self._model = model
+        self._model.setup_caches(1)
+
+        self._text_tokenizer = self.load_llama3_tokenizer()
+
+        device = next(model.parameters()).device
+        
+        # Try multiple approaches to load the mimi weights
+        try:
+            print("Attempting to load mimi weights...")
+            mimi = None
+            
+            # First check the models/mimi directory
+            local_mimi_path = os.path.join("models", "mimi", "model.safetensors")
+            if os.path.exists(local_mimi_path):
+                try:
+                    print(f"Loading mimi from local path: {local_mimi_path}")
+                    # Temporarily disable offline mode
+                    original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                    os.environ['HF_DATASETS_OFFLINE'] = '0'
+                    
+                    # Try standard loader with local file
+                    from moshi.models import loaders
+                    mimi = loaders.get_mimi(local_mimi_path, device=device)
+                    print("Successfully loaded local mimi model")
+                    
+                    # Restore offline mode
+                    if original_hf_offline:
+                        os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+                except Exception as e:
+                    print(f"Error loading local mimi: {str(e)}")
+                    mimi = None
+            
+            # Next check CSM-1B folder
+            if mimi is None:
+                csm_mimi_path = os.path.join("models", "csm-1b", "mimi.bin")
+                if os.path.exists(csm_mimi_path):
+                    try:
+                        print(f"Loading mimi from CSM-1B folder: {csm_mimi_path}")
+                        # Temporarily disable offline mode
+                        original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                        os.environ['HF_DATASETS_OFFLINE'] = '0'
+                        
+                        from moshi.models import loaders
+                        mimi = loaders.get_mimi(csm_mimi_path, device=device)
+                        print("Successfully loaded mimi from CSM-1B folder")
+                        
+                        # Restore offline mode
+                        if original_hf_offline:
+                            os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+                    except Exception as e:
+                        print(f"Error loading mimi from CSM-1B folder: {str(e)}")
+                        mimi = None
+            
+            # As a last resort, download from Hugging Face
+            if mimi is None:
+                print("Local mimi files not found or failed to load. Downloading from Hugging Face...")
+                # Temporarily disable offline mode
+                original_hf_offline = os.environ.get('HF_DATASETS_OFFLINE')
+                os.environ['HF_DATASETS_OFFLINE'] = '0'
+                
+                from moshi.models import loaders
+                from huggingface_hub import hf_hub_download
+                
+                try:
+                    mimi_path = hf_hub_download("kyutai/moshiko-pytorch-bf16", "tokenizer-e351c8d8-checkpoint125.safetensors")
+                    print(f"Loading downloaded mimi weights from: {mimi_path}")
+                    mimi = loaders.get_mimi(mimi_path, device=device)
+                    print("Successfully loaded mimi model from downloaded file")
+                except Exception as e:
+                    print(f"Error downloading mimi file: {str(e)}")
+                    print("Falling back to default download...")
+                    mimi = loaders.get_mimi(None, device=device)
+                    
+                # Restore offline mode
+                if original_hf_offline:
+                    os.environ['HF_DATASETS_OFFLINE'] = original_hf_offline
+            
+            # Set codebooks and assign as audio tokenizer
+            mimi.set_num_codebooks(32)
+            self._audio_tokenizer = mimi
+            
+        except Exception as e:
+            print(f"Error loading mimi weights: {str(e)}")
+            print(traceback.format_exc())
+            raise
+
+        try:
+            print("Loading watermarker...")
+            # Look for a local watermarker file
+            from watermarking import load_watermarker
+            watermarker_path = os.path.join("models", "csm-1b", "watermarker.pt")
+            
+            if os.path.exists(watermarker_path):
+                print(f"Loading watermarker from local path: {watermarker_path}")
+                self._watermarker = load_watermarker(device=device, ckpt_path=watermarker_path)
+            else:
+                # Skip watermarking if file not available
+                print("Watermarker file not found. Watermarking will be disabled.")
+                self._watermarker = None
+        except Exception as e:
+            print(f"Error loading watermarker: {str(e)}")
+            print(traceback.format_exc())
+            print("Setting watermarker to None - watermarking will be skipped")
+            self._watermarker = None
+
+        self.sample_rate = mimi.sample_rate
+        self.device = device
+    
+    # Replace the __init__ method
+    Generator.__init__ = new_init
+    
 except ImportError:
     # If the generator module is not in the current directory, try to find it in the csm repository
     print("Could not import generator module directly. Make sure you've cloned the CSM repository.")
@@ -65,12 +186,12 @@ VOICE_TO_SPEAKER = {
 
 # A mapping from voice name to default audio file
 VOICE_TO_AUDIO = {
-    "conversational_a": "sounds/woman.mp3",
-    "conversational_b": "sounds/man.mp3",
-    "read_speech_a": "sounds/read_speech_a.wav",
-    "read_speech_b": "sounds/read_speech_b.wav",
-    "read_speech_c": "sounds/read_speech_c.wav",
-    "read_speech_d": "sounds/read_speech_d.wav"
+    "conversational_a": os.path.join("sounds", "woman.mp3"),
+    "conversational_b": os.path.join("sounds", "man.mp3"),
+    "read_speech_a": os.path.join("sounds", "read_speech_a.wav"),
+    "read_speech_b": os.path.join("sounds", "read_speech_b.wav"),
+    "read_speech_c": os.path.join("sounds", "read_speech_c.wav"),
+    "read_speech_d": os.path.join("sounds", "read_speech_d.wav")
 }
 
 # A mapping from voice name to default text prompt
@@ -82,6 +203,23 @@ VOICE_TO_PROMPT = {
     "read_speech_c": "All passed so quickly, there was so much going on around him, the Tree quite forgot to look to himself.",
     "read_speech_d": "Suddenly I was back in the old days Before you felt we ought to drift apart. It was some trick-the way your eyebrows raise."
 }
+
+def ensure_directories():
+    """Ensure all required directories exist."""
+    dirs_to_create = [
+        os.path.join("models", "csm-1b"),
+        os.path.join("models", "llama3.2"),
+        os.path.join("models", "mimi"),
+        "sounds"
+    ]
+    
+    for directory in dirs_to_create:
+        if not os.path.exists(directory):
+            print(f"Creating directory: {directory}")
+            os.makedirs(directory, exist_ok=True)
+
+# Call this function early in the script
+ensure_directories()
 
 def load_model(model_path):
     """Load the CSM model from the given path."""
@@ -119,36 +257,56 @@ def load_model(model_path):
         return f"Error loading model: {str(e)}"
 
 def download_model(output_path):
-    """Download the CSM model from Hugging Face."""
+    """Download the CSM model and all necessary files from Hugging Face."""
     try:
         # Create models directory if it doesn't exist
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
-        # URL to download the model from Hugging Face
-        model_url = "https://huggingface.co/drbaph/CSM-1B/resolve/main/model.safetensors?download=true"
+        # Files to download from the CSM-1B repository
+        files_to_download = {
+            "model.safetensors": "https://huggingface.co/drbaph/CSM-1B/resolve/main/model.safetensors?download=true",
+        }
         
-        # Download the model
-        print(f"Downloading CSM model to {output_path}...")
-        response = requests.get(model_url, stream=True)
-        
-        # Check if the request was successful
-        if response.status_code == 200:
-            with open(output_path, 'wb') as f:
-                response.raw.decode_content = True
-                shutil.copyfileobj(response.raw, f)
+        # Download each file
+        for filename, url in files_to_download.items():
+            file_path = os.path.join(os.path.dirname(output_path), filename)
             
-            # Create an empty config.json file in the same directory
-            config_path = os.path.join(os.path.dirname(output_path), "config.json")
-            with open(config_path, 'w') as f:
-                f.write('{"model_type": "csm-1b"}')
+            if os.path.exists(file_path):
+                print(f"File {filename} already exists at {file_path}. Skipping download.")
+                continue
+                
+            print(f"Downloading {filename} from {url} to {file_path}...")
+            response = requests.get(url, stream=True)
             
-            return f"Model downloaded successfully to {output_path}."
-        else:
-            # Check for 401 Unauthorized error which may indicate lack of access
-            if response.status_code == 401:
-                return "Error: Unauthorized access. Make sure you have requested and been granted access to the model on Hugging Face."
+            # Check if the request was successful
+            if response.status_code == 200:
+                with open(file_path, 'wb') as f:
+                    response.raw.decode_content = True
+                    shutil.copyfileobj(response.raw, f)
+                print(f"Successfully downloaded {filename}")
             else:
-                return f"Error downloading model: HTTP status code {response.status_code}"
+                # Check for 401 Unauthorized error which may indicate lack of access
+                if response.status_code == 401:
+                    return f"Error: Unauthorized access. Make sure you have requested and been granted access to {filename} on Hugging Face."
+                else:
+                    return f"Error downloading {filename}: HTTP status code {response.status_code}"
+        
+        # Create a config.json file in the same directory
+        config_path = os.path.join(os.path.dirname(output_path), "config.json")
+        config_content = {
+            "model_type": "csm-1b",
+            "backbone_flavor": "llama-1B",
+            "decoder_flavor": "llama-100M",
+            "text_vocab_size": 128256,
+            "audio_vocab_size": 2051,
+            "audio_num_codebooks": 32
+        }
+        
+        with open(config_path, 'w') as f:
+            json.dump(config_content, f, indent=2)
+        print(f"Created config.json at {config_path}")
+            
+        return f"Model downloaded successfully to {output_path}. A config.json file was also created."
     except Exception as e:
         return f"Error downloading model: {str(e)}"
 
@@ -502,7 +660,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
         model_path = gr.Textbox(
             label="Model Path",
             placeholder="Path to the CSM model file model.safetensors",
-            value="models/csm-1b/model.safetensors"
+            value=os.path.join("models", "csm-1b", "model.safetensors")
         )
         with gr.Column():
             load_button = gr.Button("Load Model")
@@ -670,7 +828,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
                 speaker_a_audio = gr.Audio(
                     label="Speaker prompt",
                     type="filepath",
-                    value="sounds/woman.mp3"  # Default to woman.mp3
+                    value=os.path.join("sounds", "woman.mp3")  # Using os.path.join
                 )
             
             # Speaker B column
@@ -693,7 +851,7 @@ with gr.Blocks(title="CSM-WebUI (WSL)") as app:
                 speaker_b_audio = gr.Audio(
                     label="Speaker prompt",
                     type="filepath",
-                    value="sounds/man.mp3"  # Default to man.mp3
+                    value=os.path.join("sounds", "man.mp3")  # Using os.path.join
                 )
         
         gr.Markdown("## Conversation content")
