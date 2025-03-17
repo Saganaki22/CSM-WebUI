@@ -65,21 +65,23 @@ Our setup ensures compatible versions of key packages:
 
 The project uses the CSM-1B .safeteonsors model:
 - **CSM-1B**: Available at [drbaph/CSM-1B](https://huggingface.co/drbaph/CSM-1B/tree/main)
+  place in models/csm-1b/*
 
-Models are stored in specific directories:
-- Windows: `models/model.safetensors`
-- WSL: Same structure, but will default to the original model paths if not found locally
+- **Llama-3.2-1b**: download from [drbaph/models](https://huggingface.co/drbaph/models/tree/main/llama3.2)
+  place in models/llama3.2/*
 
 ### HuggingFace Authentication Requirements
 
-**IMPORTANT:** Before installation, you need to:
+***UPDATE*** Since models were gated I re-uploaded them to my repo non-gated for ease of access [HuggingFace](https://huggingface.co/drbaph/models/tree/main)
 
-1. Create a HuggingFace account at [huggingface.co](https://huggingface.co)
-2. Visit [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and request access to the model
-3. Create a HuggingFace access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
-4. During the installation process, you will be prompted to authenticate with your HuggingFace token - paste the token when prompted
+~~**IMPORTANT:** Before installation, you need to:~~  
 
-Without access to the Llama model and proper authentication, the program will not work as it uses the Llama backbone.
+~~1. Create a HuggingFace account at [huggingface.co](https://huggingface.co)~~  
+~~2. Visit [meta-llama/Llama-3.2-1B](https://huggingface.co/meta-llama/Llama-3.2-1B) and request access to the model~~  
+~~3. Create a HuggingFace access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)~~  
+~~4. During the installation process, you will be prompted to authenticate with your HuggingFace token - paste the token when prompted~~  
+
+~~Without access to the Llama model and proper authentication, the program will not work as it uses the Llama backbone.~~
 
 ## ⚙️ Installation
 
@@ -87,7 +89,8 @@ Without access to the Llama model and proper authentication, the program will no
 
 ```batch
 # Clone the repository
-git clone https://github.com/Saganaki22/CSM-WebUI.git
+git clone git clone --branch alpha https://github.com/Saganaki22/CSM-WebUI.git
+
 cd CSM-WebUI
 
 # Step 1: Run the improved Windows setup script
@@ -123,7 +126,8 @@ run_fixed.bat
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/CSM-WebUI.git
+git clone git clone --branch alpha https://github.com/Saganaki22/CSM-WebUI.git
+
 cd CSM-WebUI
 
 # Run the WSL setup script
