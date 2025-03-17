@@ -121,6 +121,9 @@ run_fixed.bat
 3. **Use run_fixed.bat to launch the application**
    - This script is automatically created by fix-torch-compile.bat
    - Properly activates the virtual environment and launches the application
+  
+ 4. **Use hf_login.bat if you get any authentication errors** 
+
 
 ### WSL/Linux Installation
 
