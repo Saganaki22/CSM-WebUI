@@ -190,18 +190,34 @@ This fork is designed to let you use both environments without conflicts:
 ```
 CSM-WebUI/
 ├── models/                   # Directory for model files
-│   └── model.safetensors     # CSM model file (where setup scripts save model)
+│   ├── csm-1b/              # CSM-1B model files
+│   │   ├── model.safetensors # Main CSM model file (5.8GB)
+│   │   └── config.json      # Model configuration
+│   ├── llama3.2/            # Llama 3.2 model files
+│   │   ├── config.json      # Model configuration
+│   │   ├── generation_config.json # Generation settings
+│   │   ├── tokenizer.json   # Main tokenizer file
+│   │   ├── tokenizer_config.json # Tokenizer configuration
+│   │   └── special_tokens_map.json # Special tokens mapping
+│   └── mimi/                # Mimi model files
+│       └── model.safetensors # Mimi model file (367MB)
 ├── sounds/                   # Directory for example audio files
-│   ├── man.mp3               # Male voice example
-│   └── woman.mp3             # Female voice example
-├── generator.py              # Generator for speech synthesis
-├── watermarking.py           # Audio watermarking functionality
-├── wsl-gradio.py             # Gradio UI for WSL/Linux
-├── win-gradio.py             # Windows-specific Gradio UI
-├── verbose-win-setup.bat     # Improved setup script for Windows with verbose output
-├── fix-torch-compile.bat     # Script to fix PyTorch compilation issues
-├── wsl-setup.sh              # Setup script for WSL/Linux
-└── requirements.txt          # Python package requirements
+│   ├── man.mp3              # Male voice example
+│   ├── woman.mp3            # Female voice example
+│   ├── read_speech_a.wav    # Speech sample A
+│   ├── read_speech_b.wav    # Speech sample B
+│   ├── read_speech_c.wav    # Speech sample C
+│   └── read_speech_d.wav    # Speech sample D
+├── generator.py             # Generator for speech synthesis
+├── models.py               # Model definitions and configurations
+├── watermarking.py         # Audio watermarking functionality
+├── wsl-gradio.py          # Gradio UI for WSL/Linux
+├── win-gradio.py          # Windows-specific Gradio UI
+├── verbose-win-setup.bat  # Improved setup script for Windows with verbose output
+├── fix-torch-compile.bat  # Script to fix PyTorch compilation issues
+├── wsl-setup.sh          # Setup script for WSL/Linux
+├── hf_login.bat          # HuggingFace login script for Windows
+└── requirements.txt      # Python package requirements
 ```
 
 ## 💡 Key Differences from Original
